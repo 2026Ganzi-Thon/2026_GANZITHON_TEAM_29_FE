@@ -42,7 +42,6 @@ export default function FarmScene3D() {
         );
       }
 
-      // Renderer
       renderer = new Renderer({
         gl,
         alpha: false,
@@ -55,11 +54,9 @@ export default function FarmScene3D() {
 
       gl.viewport(0, 0, width, height);
 
-      // Scene
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(0xeeeeee);
 
-      // Camera
       const camera = new THREE.PerspectiveCamera(
         35,
         width / height,
@@ -70,7 +67,6 @@ export default function FarmScene3D() {
       camera.position.set(0, 5, 8);
       camera.lookAt(0, 0, 0);
 
-      // Lights
       const ambientLight = new THREE.AmbientLight(
         0xffffff,
         1.5
@@ -84,7 +80,6 @@ export default function FarmScene3D() {
       directionalLight.position.set(5, 10, 7);
       scene.add(directionalLight);
 
-      // 테스트 큐브
       const testCube = new THREE.Mesh(
         new THREE.BoxGeometry(1, 1, 1),
         new THREE.MeshBasicMaterial({
@@ -94,13 +89,11 @@ export default function FarmScene3D() {
 
       scene.add(testCube);
 
-      // 초기 렌더링
       renderer.render(scene, camera);
       gl.endFrameEXP();
 
       console.log('초기 테스트 큐브 렌더링 완료');
 
-      // GLB 파일 불러오기
       const modelAsset = Asset.fromModule(
         require('../../../assets/models/farms/farm_1.glb')
       );
@@ -252,17 +245,14 @@ export default function FarmScene3D() {
         farmModel.scale.multiplyScalar(scale);
       }
 
-      // 테스트 큐브 제거
       scene.remove(testCube);
       testCube.geometry.dispose();
       testCube.material.dispose();
 
-      // 농장 모델 추가
       scene.add(farmModel);
 
       console.log('농장 3D 모델 및 텍스처 로딩 성공');
 
-      // 렌더링
       const render = () => {
         if (!mountedRef.current) return;
 
