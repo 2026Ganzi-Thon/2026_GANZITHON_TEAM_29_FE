@@ -9,11 +9,12 @@
     "expo-asset": "~58.0.21",
     "expo-gl": "~58.0.4",
     "expo-status-bar": "~58.0.5",
+    "expo-three": "^8.0.0",
     "react": "19.3.0",
     "react-native": "0.88.1",
     "react-native-safe-area-context": "~5.11.1",
     "react-native-screens": "~4.30.1",
-    "three": "^0.187.0"
+    "three": "^0.166.1"
   },
   "scripts": {
     "start": "expo start",

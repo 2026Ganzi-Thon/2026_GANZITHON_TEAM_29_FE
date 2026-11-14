@@ -1,13 +1,13 @@
 
 import React, { useEffect, useRef } from 'react';
-import { StyleSheet, View } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 import { GLView } from 'expo-gl';
-import * as ExpoTHREE from 'expo-three';
+import { loadAsync, Renderer, THREE } from 'expo-three';
 
-global.THREE = global.THREE || ExpoTHREE.THREE;
+global.THREE = global.THREE || THREE;
 
 export default function FarmScene3D() {
-  const frameRef = useRef(null);
+  const animationRef = useRef(null);
   const mountedRef = useRef(true);
 
   useEffect(() => {
@@ -16,48 +16,52 @@ export default function FarmScene3D() {
     return () => {
       mountedRef.current = false;
 
-      if (frameRef.current) {
-        cancelAnimationFrame(frameRef.current);
+      if (animationRef.current !== null) {
+        cancelAnimationFrame(animationRef.current);
       }
     };
   }, []);
 
   const onContextCreate = async (gl) => {
+    let renderer;
+
     try {
-      const THREE = ExpoTHREE.THREE;
+      const width = gl.drawingBufferWidth;
+      const height = gl.drawingBufferHeight;
+
+      renderer = new Renderer({
+        gl,
+        alpha: true,
+        antialias: true,
+      });
+
+      renderer.setPixelRatio(1);
+      renderer.setSize(width, height);
+      renderer.setClearColor(0x000000, 0);
 
       const scene = new THREE.Scene();
 
       const camera = new THREE.PerspectiveCamera(
         35,
-        gl.drawingBufferWidth / gl.drawingBufferHeight,
+        width / height,
         0.1,
-        100
+        1000
       );
 
-      camera.position.set(2.9, 2.6, 3.5);
-      camera.lookAt(0, 0, 0);
-
-      const renderer = new ExpoTHREE.Renderer({ gl });
-      renderer.setSize(
-        gl.drawingBufferWidth,
-        gl.drawingBufferHeight
+      const ambientLight = new THREE.AmbientLight(
+        0xffffff,
+        1.5
       );
-      renderer.setClearColor(0x000000, 0);
-
-      // 조명
-      const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
       scene.add(ambientLight);
 
       const directionalLight = new THREE.DirectionalLight(
         0xffffff,
         2
       );
-      directionalLight.position.set(3, 5, 4);
+      directionalLight.position.set(5, 10, 7);
       scene.add(directionalLight);
 
-      // 실제 GLB 파일 불러오기
-      const gltf = await ExpoTHREE.loadAsync(
+      const gltf = await loadAsync(
         require('../../../assets/models/farm/farm.glb')
       );
 
@@ -65,26 +69,48 @@ export default function FarmScene3D() {
 
       const farmModel = gltf.scene || gltf;
 
-      // 모델 중심 정렬
-      const box = new THREE.Box3().setFromObject(farmModel);
-      const center = box.getCenter(new THREE.Vector3());
+      farmModel.updateMatrixWorld(true);
+
+      const boundingBox = new THREE.Box3().setFromObject(
+        farmModel
+      );
+
+      const center = new THREE.Vector3();
+      const size = new THREE.Vector3();
+
+      boundingBox.getCenter(center);
+      boundingBox.getSize(size);
 
       farmModel.position.sub(center);
-      farmModel.scale.setScalar(1.4);
+
+      const maxDimension = Math.max(
+        size.x,
+        size.y,
+        size.z
+      );
+
+      if (maxDimension > 0) {
+        const scale = 3.5 / maxDimension;
+        farmModel.scale.multiplyScalar(scale);
+      }
 
       scene.add(farmModel);
 
-      // 렌더링
+      camera.position.set(0, 3.2, 4.8);
+      camera.lookAt(0, 0, 0);
+      camera.updateProjectionMatrix();
+
       const render = () => {
         if (!mountedRef.current) return;
 
-        frameRef.current = requestAnimationFrame(render);
+        animationRef.current = requestAnimationFrame(render);
 
         renderer.render(scene, camera);
         gl.endFrameEXP();
       };
 
       render();
+
     } catch (error) {
       console.error('농장 3D 모델 로딩 실패:', error);
     }
@@ -104,6 +130,7 @@ const styles = StyleSheet.create({
   container: {
     ...StyleSheet.absoluteFillObject,
   },
+
   glView: {
     flex: 1,
   },
