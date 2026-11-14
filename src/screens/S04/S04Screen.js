@@ -25,6 +25,15 @@ export default function S04Screen({ route, navigation }) {
     navigation.navigate('S05', { plotIndex, condition: null });
   };
 
+  // 💡 스택 히스토리가 없을 때 나는 에러를 방지하는 안전한 뒤로가기 함수
+  const handleGoBack = () => {
+    if (navigation.canGoBack()) {
+      navigation.goBack();
+    } else {
+      navigation.navigate('S03');
+    }
+  };
+
   return (
     <View style={styles.container}>
       <View style={styles.sceneContainer}>
@@ -33,12 +42,12 @@ export default function S04Screen({ route, navigation }) {
 
       <Pressable 
         style={styles.backdrop} 
-        onPress={() => navigation.goBack()} 
+        onPress={handleGoBack} 
       />
 
       <View style={styles.bottomSheet}>
         <View style={styles.headerRow}>
-          <Pressable onPress={() => navigation.goBack()} style={styles.backButton}>
+          <Pressable onPress={handleGoBack} style={styles.backButton}>
             <Text style={styles.backIcon}>〈</Text>
           </Pressable>
           <Text style={styles.stepText}>1 / 2</Text>

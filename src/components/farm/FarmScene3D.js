@@ -25,7 +25,7 @@ export default function FarmScene3D({
   const mouseRef = useRef(new THREE.Vector2());
   const sceneRef = useRef(null);
   const cameraRef = useRef(null);
-  const plotsMapRef = useRef(new Map()); // 💡 인덱스별 메쉬를 정확히 관리하기 위한 Map
+  const plotsMapRef = useRef(new Map());
 
   useEffect(() => {
     mountedRef.current = true;
@@ -38,22 +38,20 @@ export default function FarmScene3D({
     };
   }, []);
 
-  // 💡 선택된 밭만 개별적으로 머티리얼을 복제하여 노란색 테두리(발광) 효과 적용
   useEffect(() => {
     plotsMapRef.current.forEach((mesh, index) => {
       if (!mesh.material) return;
 
-      // 공유 머티리얼 간섭을 막기 위해 material이 하나가 아니라면 복제(clone) 사용
       if (!mesh.userData.clonedMaterial) {
         mesh.userData.clonedMaterial = mesh.material.clone();
         mesh.material = mesh.userData.clonedMaterial;
       }
 
       if (index === selectedPlotIndex) {
-        mesh.material.emissive = new THREE.Color(0xffd700); // 노란빛
+        mesh.material.emissive = new THREE.Color(0xffd700);
         mesh.material.emissiveIntensity = 0.8;
       } else {
-        mesh.material.emissive = new THREE.Color(0x000000); // 원복
+        mesh.material.emissive = new THREE.Color(0x000000);
         mesh.material.emissiveIntensity = 0;
       }
       mesh.material.needsUpdate = true;
@@ -74,9 +72,13 @@ export default function FarmScene3D({
 
       const GRASS_COLOR = 0xA8D377;
       renderer.setClearColor(GRASS_COLOR, 1);
-      renderer.outputEncoding = THREE.sRGBEncoding;
+      
+      renderer.outputColorSpace = THREE.SRGBColorSpace;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.2;
+      renderer.toneMappingExposure = 1.15; // 💡 명도(노출)를 살짝 높여 화사하게 조절
+
+      renderer.shadowMap.enabled = true;
+      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
       gl.viewport(0, 0, width, height);
 
@@ -89,12 +91,28 @@ export default function FarmScene3D({
       camera.lookAt(...cameraLookAt);
       cameraRef.current = camera;
 
-      const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
+      const ambientLight = new THREE.AmbientLight(0xffffff, 0.75); // 💡 주변광 밝기 상향
       scene.add(ambientLight);
 
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
-      directionalLight.position.set(6, 12, 6);
+      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.1); // 💡 메인 태양광 밝기 상향
+      directionalLight.position.set(10, 20, 10);
+      directionalLight.castShadow = true;
+      
+      directionalLight.shadow.mapSize.width = 1024;
+      directionalLight.shadow.mapSize.height = 1024;
+      directionalLight.shadow.camera.near = 0.5;
+      directionalLight.shadow.camera.far = 50;
+      const d = 10;
+      directionalLight.shadow.camera.left = -d;
+      directionalLight.shadow.camera.right = d;
+      directionalLight.shadow.camera.top = d;
+      directionalLight.shadow.camera.bottom = -d;
+      directionalLight.shadow.bias = -0.0005;
       scene.add(directionalLight);
+
+      const fillLight = new THREE.DirectionalLight(0xddeeff, 0.4); // 💡 보조광도 살짝 상향
+      fillLight.position.set(-10, 10, -10);
+      scene.add(fillLight);
 
       const modelAsset = Asset.fromModule(
         require('../../../assets/3d/farm_base.glb')
@@ -133,7 +151,7 @@ export default function FarmScene3D({
                 textureLoader.load(textureUri, resolve, undefined, reject);
               });
               texture.flipY = false;
-              texture.encoding = THREE.sRGBEncoding;
+              texture.colorSpace = THREE.SRGBColorSpace;
               return texture;
             }
           })();
@@ -154,14 +172,17 @@ export default function FarmScene3D({
       plotsMapRef.current.clear();
       farmModel.traverse((child) => {
         if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+
           if (child.material) {
-            child.material.roughness = 0.7;
+            child.material.roughness = 0.6;
+            child.material.metalness = 0.1;
             child.material.needsUpdate = true;
           }
           
-          // 💡 이름이 'plot_숫자' 형태로 되어 있는 경우 숫자를 추출하여 정확한 인덱스로 매칭
           if (child.name && child.name.toLowerCase().startsWith('plot')) {
-            const match = child.name.match(/\d+/); // 이름 안에서 숫자 추출 (예: plot_0 -> 0)
+            const match = child.name.match(/\d+/);
             if (match) {
               const plotIndex = parseInt(match[0], 10);
               plotsMapRef.current.set(plotIndex, child);
@@ -213,14 +234,12 @@ export default function FarmScene3D({
 
     raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
     
-    // 등록된 밭 메쉬들만 골라서 레이캐스트 검사
     const plotMeshes = Array.from(plotsMapRef.current.values());
     const intersects = raycasterRef.current.intersectObjects(plotMeshes, true);
 
     if (intersects.length > 0) {
       const hitMesh = intersects[0].object;
       
-      // 💡 어떤 인덱스의 밭인지 Map에서 역으로 찾기
       let foundIndex = null;
       for (let [index, mesh] of plotsMapRef.current.entries()) {
         if (mesh === hitMesh) {
