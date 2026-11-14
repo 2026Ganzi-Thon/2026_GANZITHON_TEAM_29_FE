@@ -17,6 +17,12 @@ import BottomNoticeToast from '../../components/common/BottomNoticeToast';
 
 export default function S03Screen({ navigation }) {
   const [currentTime, setCurrentTime] = useState('');
+  const [selectedPlot, setSelectedPlot] = useState(null);
+  
+
+  const [plotsData, setPlotsData] = useState(
+    Array.from({ length: 12 }, (_, index) => ({ id: index, cropType: null, stage: 0 }))
+  );
 
   useEffect(() => {
     const updateCurrentTime = () => {
@@ -32,12 +38,26 @@ export default function S03Screen({ navigation }) {
     return () => clearInterval(interval);
   }, []);
 
+
+  const handleSelectPlot = (index) => {
+    setSelectedPlot(index); 
+
+    if (!plotsData[index].cropType) {
+      setTimeout(() => {
+        navigation.navigate('S04', { plotIndex: index });
+      }, 150); 
+    }
+  };
+
   return (
     <View style={commonStyles.screen}>
       <View style={styles.farmBackground}>
         <FarmScene3D 
           cameraPos={[0, 5.0, 5.8]} 
           modelOffsetY={0.4} 
+          plotsData={plotsData}
+          selectedPlotIndex={selectedPlot}
+          onSelectPlot={handleSelectPlot}
         />
       </View>
 

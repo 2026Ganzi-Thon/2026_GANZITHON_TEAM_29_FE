@@ -1,6 +1,11 @@
-import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import React, { useEffect, useState } from 'react';
+import { View, ActivityIndicator, StyleSheet } from 'react-native';
+import { NavigationContainer, useNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+import AsyncStorage from '@react-native-async-storage/async-storage';
+import { COLORS } from '../styles/colors';
+
+import DevToolsModal from '../components/common/DevToolsModal';
 
 import S01Screen from '../screens/S01/S01Screen';
 import S02Screen from '../screens/S02/S02Screen';
@@ -25,13 +30,47 @@ import S19Screen from '../screens/S19/S19Screen';
 const Stack = createNativeStackNavigator();
 
 export default function AppNavigator() {
+  const [initialRoute, setInitialRoute] = useState(null);
+  const navigationRef = useNavigationContainerRef();
+
+  useEffect(() => {
+    const checkInitialRoute = async () => {
+      try {
+        const userToken = await AsyncStorage.getItem('userToken');
+        if (!userToken) {
+          setInitialRoute('S18');
+          return;
+        }
+
+        const hasOnboarded = await AsyncStorage.getItem('settings_onboarded');
+        const hasRecords = await AsyncStorage.getItem('userFarmRecords');
+
+        if (!hasOnboarded || !hasRecords) {
+          setInitialRoute('S01');
+        } else {
+          setInitialRoute('S03');
+        }
+      } catch (error) {
+        setInitialRoute('S18');
+      }
+    };
+
+    checkInitialRoute();
+  }, []);
+
+  if (!initialRoute) {
+    return (
+      <View style={styles.loaderContainer}>
+        <ActivityIndicator size="large" color={COLORS.black} />
+      </View>
+    );
+  }
+
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       <Stack.Navigator
-        initialRouteName="S01"
-        screenOptions={{
-          headerShown: false,
-        }}
+        initialRouteName={initialRoute}
+        screenOptions={{ headerShown: false }}
       >
         <Stack.Screen name="S01" component={S01Screen} />
         <Stack.Screen name="S02" component={S02Screen} />
@@ -53,6 +92,24 @@ export default function AppNavigator() {
         <Stack.Screen name="S18" component={S18Screen} />
         <Stack.Screen name="S19" component={S19Screen} />
       </Stack.Navigator>
+
+      {__DEV__ && (
+        <DevToolsModal 
+          navigation={{
+            reset: (state) => navigationRef.current?.reset(state),
+            navigate: (name) => navigationRef.current?.navigate(name)
+          }} 
+        />
+      )}
     </NavigationContainer>
   );
 }
+
+const styles = StyleSheet.create({
+  loaderContainer: {
+    flex: 1,
+    justifyContent: 'center',
+    alignItems: 'center',
+    backgroundColor: COLORS.white,
+  },
+});

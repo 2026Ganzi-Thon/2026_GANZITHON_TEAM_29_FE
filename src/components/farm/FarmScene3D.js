@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { View, StyleSheet, TouchableWithoutFeedback, Dimensions } from 'react-native';
 import { GLView } from 'expo-gl';
 import { Renderer, THREE, TextureLoader } from 'expo-three';
 import { Asset } from 'expo-asset';
@@ -9,14 +9,23 @@ import { GLTFLoader } from 'three-stdlib';
 
 global.THREE = global.THREE || THREE;
 
-// 💡 외부에서 카메라 위치나 모델 위치를 props로 받을 수 있게 처리
+const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+
 export default function FarmScene3D({
-  cameraPos = [0, 5.5, 6.2], // 기본 카메라 위치
-  cameraLookAt = [0, -0.2, 0], // 시선 처리
-  modelOffsetY = 0.8, // 3D 모델 Y축 오프셋
+  cameraPos = [0, 5.5, 6.2], 
+  cameraLookAt = [0, -0.2, 0], 
+  modelOffsetY = 0.8, 
+  plotsData = [],       
+  onSelectPlot,         
+  selectedPlotIndex = null, // 💡 추가됨: 선택된 밭 인덱스
 }) {
   const animationRef = useRef(null);
   const mountedRef = useRef(true);
+  const raycasterRef = useRef(new THREE.Raycaster());
+  const mouseRef = useRef(new THREE.Vector2());
+  const sceneRef = useRef(null);
+  const cameraRef = useRef(null);
+  const plotsMeshRef = useRef([]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -28,6 +37,21 @@ export default function FarmScene3D({
       }
     };
   }, []);
+
+  // 💡 선택된 밭이 바뀔 때 노란색 테두리(발광) 효과 적용
+  useEffect(() => {
+    plotsMeshRef.current.forEach((mesh, index) => {
+      if (!mesh.material) return;
+      if (index === selectedPlotIndex) {
+        mesh.material.emissive = new THREE.Color(0xffd700); // 노란색 빛
+        mesh.material.emissiveIntensity = 0.7;
+      } else {
+        mesh.material.emissive = new THREE.Color(0x000000);
+        mesh.material.emissiveIntensity = 0;
+      }
+      mesh.material.needsUpdate = true;
+    });
+  }, [selectedPlotIndex]);
 
   const onContextCreate = async (gl) => {
     let renderer;
@@ -51,11 +75,12 @@ export default function FarmScene3D({
 
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(GRASS_COLOR);
+      sceneRef.current = scene;
 
-      // 전달받은 카메라 위치 적용
       const camera = new THREE.PerspectiveCamera(35, width / height, 0.1, 1000);
       camera.position.set(...cameraPos);
       camera.lookAt(...cameraLookAt);
+      cameraRef.current = camera;
 
       const ambientLight = new THREE.AmbientLight(0xffffff, 1.5);
       scene.add(ambientLight);
@@ -65,7 +90,7 @@ export default function FarmScene3D({
       scene.add(directionalLight);
 
       const modelAsset = Asset.fromModule(
-        require('../../../assets/models/farms/farm_1.glb')
+        require('../../../assets/3d/farm_base.glb')
       );
       await modelAsset.downloadAsync();
       if (!mountedRef.current) return;
@@ -118,10 +143,17 @@ export default function FarmScene3D({
       if (!mountedRef.current) return;
 
       const farmModel = gltf.scene;
+      
+      plotsMeshRef.current = [];
       farmModel.traverse((child) => {
-        if (child.isMesh && child.material) {
-          child.material.roughness = 0.7;
-          child.material.needsUpdate = true;
+        if (child.isMesh) {
+          if (child.material) {
+            child.material.roughness = 0.7;
+            child.material.needsUpdate = true;
+          }
+          if (child.name && child.name.toLowerCase().includes('plot')) {
+            plotsMeshRef.current.push(child);
+          }
         }
       });
 
@@ -141,9 +173,7 @@ export default function FarmScene3D({
         farmModel.scale.multiplyScalar(scale);
       }
       
-      // 전달받은 모델 Y축 오프셋 적용
       farmModel.position.y += modelOffsetY;
-
       scene.add(farmModel);
 
       const render = () => {
@@ -158,14 +188,50 @@ export default function FarmScene3D({
     }
   };
 
+  const handleTouch = (event) => {
+    if (!cameraRef.current || !sceneRef.current || !onSelectPlot) return;
+
+    const { nativeEvent } = event;
+    const x = nativeEvent.locationX;
+    const y = nativeEvent.locationY;
+
+    mouseRef.current.x = (x / SCREEN_WIDTH) * 2 - 1;
+    mouseRef.current.y = -(y / SCREEN_HEIGHT) * 2 + 1;
+
+    raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
+    const intersects = raycasterRef.current.intersectObjects(plotsMeshRef.current, true);
+
+    if (intersects.length > 0) {
+      const hitMesh = intersects[0].object;
+      const index = plotsMeshRef.current.indexOf(hitMesh);
+      if (index !== -1) {
+        onSelectPlot(index);
+      }
+    }
+  };
+
   return (
-    <View style={styles.container}>
-      <GLView style={styles.glView} onContextCreate={onContextCreate} />
-    </View>
+    <TouchableWithoutFeedback onPress={handleTouch}>
+      <View style={styles.container}>
+        <GLView style={styles.glView} onContextCreate={onContextCreate} />
+      </View>
+    </TouchableWithoutFeedback>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%', backgroundColor: '#A8D377' },
-  glView: { width: '100%', height: '100%' },
+  container: { 
+    position: 'absolute', 
+    top: 0, 
+    left: 0, 
+    right: 0, 
+    bottom: 0, 
+    width: '100%', 
+    height: '100%', 
+    backgroundColor: '#A8D377' 
+  },
+  glView: { 
+    width: '100%', 
+    height: '100%' 
+  },
 });
