@@ -70,7 +70,10 @@ export default function AppNavigator() {
     <NavigationContainer ref={navigationRef}>
       <Stack.Navigator
         initialRouteName={initialRoute}
-        screenOptions={{ headerShown: false }}
+        screenOptions={{ 
+          headerShown: false,
+          animation: 'fade', // 부드러운 전환 효과
+        }}
       >
         <Stack.Screen name="S01" component={S01Screen} />
         <Stack.Screen name="S02" component={S02Screen} />

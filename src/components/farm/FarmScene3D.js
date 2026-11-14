@@ -17,7 +17,7 @@ export default function FarmScene3D({
   modelOffsetY = 0.8, 
   plotsData = [],       
   onSelectPlot,         
-  selectedPlotIndex = null, // 💡 추가됨: 선택된 밭 인덱스
+  selectedPlotIndex = null,
 }) {
   const animationRef = useRef(null);
   const mountedRef = useRef(true);
@@ -25,7 +25,7 @@ export default function FarmScene3D({
   const mouseRef = useRef(new THREE.Vector2());
   const sceneRef = useRef(null);
   const cameraRef = useRef(null);
-  const plotsMeshRef = useRef([]);
+  const plotsMapRef = useRef(new Map()); // 💡 인덱스별 메쉬를 정확히 관리하기 위한 Map
 
   useEffect(() => {
     mountedRef.current = true;
@@ -38,15 +38,22 @@ export default function FarmScene3D({
     };
   }, []);
 
-  // 💡 선택된 밭이 바뀔 때 노란색 테두리(발광) 효과 적용
+  // 💡 선택된 밭만 개별적으로 머티리얼을 복제하여 노란색 테두리(발광) 효과 적용
   useEffect(() => {
-    plotsMeshRef.current.forEach((mesh, index) => {
+    plotsMapRef.current.forEach((mesh, index) => {
       if (!mesh.material) return;
+
+      // 공유 머티리얼 간섭을 막기 위해 material이 하나가 아니라면 복제(clone) 사용
+      if (!mesh.userData.clonedMaterial) {
+        mesh.userData.clonedMaterial = mesh.material.clone();
+        mesh.material = mesh.userData.clonedMaterial;
+      }
+
       if (index === selectedPlotIndex) {
-        mesh.material.emissive = new THREE.Color(0xffd700); // 노란색 빛
-        mesh.material.emissiveIntensity = 0.7;
+        mesh.material.emissive = new THREE.Color(0xffd700); // 노란빛
+        mesh.material.emissiveIntensity = 0.8;
       } else {
-        mesh.material.emissive = new THREE.Color(0x000000);
+        mesh.material.emissive = new THREE.Color(0x000000); // 원복
         mesh.material.emissiveIntensity = 0;
       }
       mesh.material.needsUpdate = true;
@@ -144,15 +151,21 @@ export default function FarmScene3D({
 
       const farmModel = gltf.scene;
       
-      plotsMeshRef.current = [];
+      plotsMapRef.current.clear();
       farmModel.traverse((child) => {
         if (child.isMesh) {
           if (child.material) {
             child.material.roughness = 0.7;
             child.material.needsUpdate = true;
           }
-          if (child.name && child.name.toLowerCase().includes('plot')) {
-            plotsMeshRef.current.push(child);
+          
+          // 💡 이름이 'plot_숫자' 형태로 되어 있는 경우 숫자를 추출하여 정확한 인덱스로 매칭
+          if (child.name && child.name.toLowerCase().startsWith('plot')) {
+            const match = child.name.match(/\d+/); // 이름 안에서 숫자 추출 (예: plot_0 -> 0)
+            if (match) {
+              const plotIndex = parseInt(match[0], 10);
+              plotsMapRef.current.set(plotIndex, child);
+            }
           }
         }
       });
@@ -199,13 +212,25 @@ export default function FarmScene3D({
     mouseRef.current.y = -(y / SCREEN_HEIGHT) * 2 + 1;
 
     raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
-    const intersects = raycasterRef.current.intersectObjects(plotsMeshRef.current, true);
+    
+    // 등록된 밭 메쉬들만 골라서 레이캐스트 검사
+    const plotMeshes = Array.from(plotsMapRef.current.values());
+    const intersects = raycasterRef.current.intersectObjects(plotMeshes, true);
 
     if (intersects.length > 0) {
       const hitMesh = intersects[0].object;
-      const index = plotsMeshRef.current.indexOf(hitMesh);
-      if (index !== -1) {
-        onSelectPlot(index);
+      
+      // 💡 어떤 인덱스의 밭인지 Map에서 역으로 찾기
+      let foundIndex = null;
+      for (let [index, mesh] of plotsMapRef.current.entries()) {
+        if (mesh === hitMesh) {
+          foundIndex = index;
+          break;
+        }
+      }
+
+      if (foundIndex !== null) {
+        onSelectPlot(foundIndex);
       }
     }
   };
