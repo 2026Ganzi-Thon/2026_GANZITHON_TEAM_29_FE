@@ -1,75 +1,57 @@
-﻿
-import React from 'react';
+﻿import React from 'react';
 import {
   View,
   Text,
-  Pressable,
   StyleSheet,
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS } from '../../styles/colors';
+import { FONTS } from '../../styles/fonts';
+import { commonStyles } from '../../styles/commonStyles';
+
 import FarmScene3D from '../../components/farm/FarmScene3D';
+import BottomCardModal from '../../components/common/BottomCardModal';
+import PrimaryButton from '../../components/common/PrimaryButton';
 
 export default function S01Screen({ navigation }) {
   return (
-    <View style={styles.container}>
+    <View style={commonStyles.screen}>
       <View style={styles.farmBackground}>
         <FarmScene3D />
       </View>
 
-      <SafeAreaView
-        style={styles.content}
-        pointerEvents="box-none"
-      >
-        <View style={styles.messageContainer}>
-          <Text style={styles.title}>
-            집중한 만큼,{'\n'}작은 농장이 자라요
+      <SafeAreaView style={styles.content} pointerEvents="box-none">
+        <View style={styles.topSpacer} />
+
+        <BottomCardModal>
+          <Text style={[commonStyles.title, styles.titleText]}>
+            집중한 만큼,{'\n'}작은 농장이 자라나요
           </Text>
 
           <View style={styles.guideContainer}>
-            <Text style={styles.guideText}>
-              · 작물을 고르면 바로 시작돼요
-            </Text>
-            <Text style={styles.guideText}>
-              · 중간에 멈춰도 씨앗으로 남아요
-            </Text>
-            <Text style={styles.guideText}>
-              · 기록은 서버에 저장돼요
-            </Text>
+            <Text style={styles.guideText}>· 작물을 고르면 바로 시작돼요</Text>
+            <Text style={styles.guideText}>· 중간에 멈춰도 씨앗으로 남아요</Text>
+            <Text style={styles.guideText}>· 기록은 서버에 저장돼요</Text>
           </View>
-        </View>
 
-        <View style={styles.bottomContainer}>
           <View style={styles.noticeContainer}>
-            <Text style={styles.notice}>
-              집중농장은 치료 서비스가 아니에요.
-            </Text>
-            <Text style={styles.notice}>
-              많이 힘들 땐 자살예방 상담전화 109로 연락하세요.
-            </Text>
+            <Text style={styles.notice}>집중농장은 치료 서비스가 아니에요.</Text>
+            <Text style={styles.notice}>많이 힘들 땐 자살예방 상담전화 109로 연락하세요.</Text>
           </View>
 
-          <Pressable
-            style={styles.startButton}
+          <PrimaryButton
+            title="시작하기"
             onPress={() => navigation.navigate('S02')}
-          >
-            <Text style={styles.buttonText}>시작하기</Text>
-          </Pressable>
-        </View>
+          />
+        </BottomCardModal>
       </SafeAreaView>
     </View>
   );
 }
 
+// S01Screen에는 컴포넌트 배치/레이아웃(위치) 잡는 최소한의 껍데기 스타일만 남김
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#EEEEEE',
-  },
-
   farmBackground: {
     position: 'absolute',
     top: 0,
@@ -80,69 +62,42 @@ const styles = StyleSheet.create({
     height: '100%',
     zIndex: 0,
   },
-
   content: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
+    flex: 1,
     zIndex: 1,
-    justifyContent: 'space-between',
-    paddingHorizontal: 24,
+    justifyContent: 'flex-end',
     backgroundColor: 'transparent',
   },
-
-  messageContainer: {
-    marginTop: 100,
+  topSpacer: {
+    flex: 1.2,
   },
-
-  title: {
-    fontSize: 26,
-    fontWeight: '700',
+  titleText: {
+    textAlign: 'center',
+    lineHeight: 30,
+    marginBottom: 20,
     color: COLORS.black,
-    lineHeight: 36,
   },
-
   guideContainer: {
-    marginTop: 24,
-    gap: 10,
+    width: '100%',
+    backgroundColor: COLORS.Graycontainer,
+    borderRadius: 16,
+    padding: 16,
+    gap: 8,
+    marginBottom: 16,
   },
-
   guideText: {
-    fontSize: 14,
-    color: COLORS.graytext,
+    fontSize: FONTS.size.body - 2,
+    color: COLORS.black,
+    fontWeight: FONTS.weight.medium,
   },
-
-  bottomContainer: {
-    paddingBottom: 20,
-    alignItems: 'center',
-  },
-
   noticeContainer: {
     alignItems: 'center',
     marginBottom: 16,
   },
-
   notice: {
-    fontSize: 11,
-    color: COLORS.graytext,
+    fontSize: FONTS.size.caption,
+    color: COLORS.notice,
     textAlign: 'center',
-    marginBottom: 5,
-  },
-
-  startButton: {
-    width: '100%',
-    paddingVertical: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 12,
-    backgroundColor: COLORS.black,
-  },
-
-  buttonText: {
-    fontSize: 16,
-    fontWeight: '700',
-    color: COLORS.white,
+    lineHeight: 16,
   },
 });
