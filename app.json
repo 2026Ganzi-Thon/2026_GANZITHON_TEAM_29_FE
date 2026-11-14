@@ -1,3 +1,4 @@
+
 {
   "expo": {
     "name": "jipjung-nongjang",
@@ -21,7 +22,14 @@
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
-      "expo-asset"
+      [
+        "expo-asset",
+        {
+          "assets": [
+            "./assets/models/farm/farm.glb"
+          ]
+        }
+      ]
     ]
   }
 }
