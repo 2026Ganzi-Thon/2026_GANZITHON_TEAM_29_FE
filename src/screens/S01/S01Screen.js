@@ -14,9 +14,14 @@ import FarmScene3D from '../../components/farm/FarmScene3D';
 export default function S01Screen({ navigation }) {
   return (
     <View style={styles.container}>
-      <FarmScene3D />
+      <View style={styles.farmBackground}>
+        <FarmScene3D />
+      </View>
 
-      <SafeAreaView style={styles.content}>
+      <SafeAreaView
+        style={styles.content}
+        pointerEvents="box-none"
+      >
         <View style={styles.messageContainer}>
           <Text style={styles.title}>
             집중한 만큼,{'\n'}작은 농장이 자라요
@@ -60,12 +65,32 @@ export default function S01Screen({ navigation }) {
 const styles = StyleSheet.create({
   container: {
     flex: 1,
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#EEEEEE',
+  },
+
+  farmBackground: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100%',
+    height: '100%',
+    zIndex: 0,
   },
 
   content: {
-    ...StyleSheet.absoluteFillObject,
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    zIndex: 1,
     justifyContent: 'space-between',
     paddingHorizontal: 24,
+    backgroundColor: 'transparent',
   },
 
   messageContainer: {
