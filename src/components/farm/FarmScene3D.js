@@ -50,12 +50,16 @@ export default function FarmScene3D() {
 
       renderer.setSize(width, height);
       renderer.setPixelRatio(1);
-      renderer.setClearColor(0xeeeeee, 1);
+
+      renderer.setClearColor(0xf5f1e8, 1);
+      renderer.outputEncoding = THREE.sRGBEncoding;
+      renderer.toneMapping = THREE.ACESFilmicToneMapping;
+      renderer.toneMappingExposure = 0.8;
 
       gl.viewport(0, 0, width, height);
 
       const scene = new THREE.Scene();
-      scene.background = new THREE.Color(0xeeeeee);
+      scene.background = new THREE.Color(0xf5f1e8);
 
       const camera = new THREE.PerspectiveCamera(
         35,
@@ -69,30 +73,17 @@ export default function FarmScene3D() {
 
       const ambientLight = new THREE.AmbientLight(
         0xffffff,
-        1.5
+        0.8
       );
       scene.add(ambientLight);
 
       const directionalLight = new THREE.DirectionalLight(
         0xffffff,
-        2
+        0.7
       );
-      directionalLight.position.set(5, 10, 7);
+
+      directionalLight.position.set(5, 8, 5);
       scene.add(directionalLight);
-
-      const testCube = new THREE.Mesh(
-        new THREE.BoxGeometry(1, 1, 1),
-        new THREE.MeshBasicMaterial({
-          color: 0xff0000,
-        })
-      );
-
-      scene.add(testCube);
-
-      renderer.render(scene, camera);
-      gl.endFrameEXP();
-
-      console.log('초기 테스트 큐브 렌더링 완료');
 
       const modelAsset = Asset.fromModule(
         require('../../../assets/models/farms/farm_1.glb')
@@ -114,11 +105,10 @@ export default function FarmScene3D() {
 
       const arrayBuffer = await response.arrayBuffer();
 
-      // GLTF Loader
       const loader = new GLTFLoader();
       const textureLoader = new TextureLoader();
 
-      // React Native 텍스처 로딩 처리
+
       loader.register((parser) => {
         const textureCache = new Map();
 
@@ -199,7 +189,6 @@ export default function FarmScene3D() {
         };
       });
 
-      // GLB 파싱
       const gltf = await new Promise((resolve, reject) => {
         loader.parse(
           arrayBuffer,
@@ -211,12 +200,10 @@ export default function FarmScene3D() {
 
       if (!mountedRef.current) return;
 
-      // 농장 모델
       const farmModel = gltf.scene;
 
       farmModel.updateMatrixWorld(true);
 
-      // 모델 중심 및 크기 계산
       const boundingBox = new THREE.Box3().setFromObject(
         farmModel
       );
@@ -230,10 +217,8 @@ export default function FarmScene3D() {
       console.log('농장 모델 중심:', center);
       console.log('농장 모델 크기:', size);
 
-      // 모델 중심을 원점으로 이동
       farmModel.position.sub(center);
 
-      // 모델 크기 조정
       const maxDimension = Math.max(
         size.x,
         size.y,
@@ -244,10 +229,6 @@ export default function FarmScene3D() {
         const scale = 3.5 / maxDimension;
         farmModel.scale.multiplyScalar(scale);
       }
-
-      scene.remove(testCube);
-      testCube.geometry.dispose();
-      testCube.material.dispose();
 
       scene.add(farmModel);
 
@@ -288,7 +269,7 @@ const styles = StyleSheet.create({
     bottom: 0,
     width: '100%',
     height: '100%',
-    backgroundColor: '#EEEEEE',
+    backgroundColor: '#F5F1E8',
   },
 
   glView: {
