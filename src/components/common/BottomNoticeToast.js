@@ -29,7 +29,7 @@ const styles = StyleSheet.create({
   },
   toastText: {
     color: COLORS.white,
-    fontSize: FONTS.size.body - 1,
+    fontSize: FONTS.size.body,
     fontWeight: FONTS.weight.medium,
   },
 });
