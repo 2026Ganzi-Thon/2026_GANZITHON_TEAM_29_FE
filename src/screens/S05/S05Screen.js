@@ -1,4 +1,4 @@
-﻿import React, { useEffect, useState } from 'react';
+﻿import React, { useState, useEffect } from 'react';
 import {
   View,
   Text,
@@ -8,9 +8,13 @@ import {
   FlatList,
   Dimensions,
 } from 'react-native';
+import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS } from '../../styles/colors';
 import { FONTS } from '../../styles/fonts';
+import { commonStyles } from '../../styles/commonStyles';
 import { supabase } from '../../utils/supabase';
+
+import FarmScene3D from '../../components/farm/FarmScene3D';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -18,7 +22,7 @@ export default function S05Screen({ route, navigation }) {
   const { plotIndex, energy } = route.params || {};
   const [crops, setCrops] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [selectedCropId, setSelectedCropId] = useState(null);
+  const [selectedCrop, setSelectedCrop] = useState(null);
 
   useEffect(() => {
     fetchCrops();
@@ -36,6 +40,10 @@ export default function S05Screen({ route, navigation }) {
       }
 
       setCrops(data || []);
+      if (data && data.length > 0) {
+        const recommended = data.find(c => c.is_recommended) || data[0];
+        setSelectedCrop(recommended);
+      }
     } catch (error) {
       console.error('작물 목록 조회 실패:', error.message);
     } finally {
@@ -44,8 +52,8 @@ export default function S05Screen({ route, navigation }) {
   };
 
   const handleStartFocus = () => {
-    if (!selectedCropId) return;
-    navigation.navigate('S06', { plotIndex, cropId: selectedCropId });
+    if (!selectedCrop) return;
+    navigation.navigate('S06', { plotIndex, cropId: selectedCrop.id });
   };
 
   const handleGoBack = () => {
@@ -56,82 +64,125 @@ export default function S05Screen({ route, navigation }) {
     }
   };
 
-  if (loading) {
-    return (
-      <View style={styles.centerContainer}>
-        <ActivityIndicator size="large" color={COLORS.black || '#000'} />
-      </View>
-    );
-  }
-
   return (
-    <View style={styles.container}>
-      <View style={styles.headerRow}>
-        <Pressable onPress={handleGoBack} style={styles.backButton}>
-          <Text style={styles.backIcon}>〈</Text>
-        </Pressable>
-        <Text style={styles.stepText}>2 / 2</Text>
+    <View style={commonStyles.screen}>
+      <View style={styles.farmBackground}>
+        <FarmScene3D 
+          cameraPos={[0, 5.0, 5.8]} 
+          modelOffsetY={0.4} 
+          selectedPlotIndex={plotIndex}
+        />
       </View>
 
-      <Text style={styles.title}>심을 작물을 골라주세요</Text>
-      <Text style={styles.subtitle}>컨디션에 맞는 추천 작물에 표시가 되어 있어요</Text>
-
-      <FlatList
-        data={crops}
-        keyExtractor={(item, index) => item.id?.toString() || index.toString()}
-        contentContainerStyle={styles.listContainer}
-        renderItem={({ item }) => {
-          const isSelected = selectedCropId === item.id;
-          return (
-            <Pressable
-              style={[
-                styles.cropCard,
-                isSelected && styles.selectedCard,
-              ]}
-              onPress={() => setSelectedCropId(item.id)}
-            >
-              <View>
-                <Text style={styles.cropTitle}>{item.name}</Text>
-                <Text style={styles.cropDesc}>목표 집중 시간: {item.target_time}분</Text>
-              </View>
-              {item.is_recommended && (
-                <View style={styles.badge}>
-                  <Text style={styles.badgeText}>추천</Text>
-                </View>
-              )}
-            </Pressable>
-          );
-        }}
+      <Pressable 
+        style={styles.backdrop} 
+        onPress={handleGoBack} 
       />
 
-      <Pressable
-        style={[styles.nextButton, !selectedCropId && styles.disabledButton]}
-        onPress={handleStartFocus}
-      >
-        <Text style={styles.nextButtonText}>집중 시작하기</Text>
-      </Pressable>
+      <View style={styles.bottomSheet}>
+        <View style={styles.headerRow}>
+          <Pressable onPress={handleGoBack} style={styles.backButton}>
+            <Text style={styles.backIcon}>〈</Text>
+          </Pressable>
+          <Text style={styles.stepText}>2 / 2</Text>
+        </View>
+
+        <Text style={styles.title}>
+          {energy === 'low' ? '오늘은 새싹채소 하나면\n충분해요' : '심을 작물을 골라주세요'}
+        </Text>
+        <Text style={styles.subtitle}>작물마다 키우는 시간이 달라요</Text>
+
+        {loading ? (
+          <View style={styles.loadingContainer}>
+            <ActivityIndicator size="large" color={COLORS.black} />
+          </View>
+        ) : (
+          <FlatList
+            data={crops}
+            numColumns={3}
+            keyExtractor={(item, index) => item.id?.toString() || index.toString()}
+            contentContainerStyle={styles.gridContainer}
+            columnWrapperStyle={styles.columnWrapper}
+            renderItem={({ item }) => {
+              const isSelected = selectedCrop?.id === item.id;
+              return (
+                <Pressable
+                  style={[
+                    styles.cropCard,
+                    isSelected && styles.selectedCard,
+                  ]}
+                  onPress={() => setSelectedCrop(item)}
+                >
+                  <View style={styles.cropIconPlaceholder} />
+                  <Text style={styles.cropName}>{item.name}</Text>
+                  <Text style={styles.cropTime}>{item.target_time}분</Text>
+                  {item.is_recommended && (
+                    <View style={styles.badge}>
+                      <Text style={styles.badgeText}>추천</Text>
+                    </View>
+                  )}
+                </Pressable>
+              );
+            }}
+          />
+        )}
+
+        <Pressable
+          style={[styles.startButton, !selectedCrop && styles.disabledButton]}
+          onPress={handleStartFocus}
+        >
+          <Text style={styles.startButtonText}>
+            {selectedCrop ? `${selectedCrop.name} 심기 · ${selectedCrop.target_time}분` : '작물을 선택해주세요'}
+          </Text>
+        </Pressable>
+      </View>
     </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    backgroundColor: COLORS.white || '#FFFFFF',
-    paddingHorizontal: 24,
-    paddingTop: 60,
-    paddingBottom: 36,
+  farmBackground: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100%',
+    height: '100%',
+    zIndex: 0,
   },
-  centerContainer: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
+  backdrop: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: SCREEN_HEIGHT * 0.65,
+    zIndex: 1,
+  },
+  bottomSheet: {
+    position: 'absolute',
+    bottom: 0,
+    left: 0,
+    right: 0,
+    backgroundColor: COLORS.white || '#FFFFFF',
+    borderTopLeftRadius: 28,
+    borderTopRightRadius: 28,
+    paddingHorizontal: 20,
+    paddingTop: 20,
+    paddingBottom: 32,
+    maxHeight: SCREEN_HEIGHT * 0.72,
+    zIndex: 2,
+    elevation: 10,
+    shadowColor: '#000',
+    shadowOffset: { width: 0, height: -4 },
+    shadowOpacity: 0.1,
+    shadowRadius: 10,
   },
   headerRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 16,
+    marginBottom: 12,
   },
   backButton: {
     padding: 4,
@@ -147,67 +198,84 @@ const styles = StyleSheet.create({
     fontWeight: FONTS.weight.medium,
   },
   title: {
-    fontSize: FONTS.size.title || 22,
+    fontSize: FONTS.size.title || 20,
     fontWeight: FONTS.weight.bold,
     color: COLORS.black,
-    marginBottom: 6,
+    lineHeight: 28,
+    marginBottom: 4,
   },
   subtitle: {
-    fontSize: FONTS.size.body,
+    fontSize: FONTS.size.body - 1,
     color: COLORS.graytext,
-    marginBottom: 24,
+    marginBottom: 16,
   },
-  listContainer: {
-    gap: 12,
-    paddingBottom: 20,
+  loadingContainer: {
+    height: 200,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  gridContainer: {
+    paddingBottom: 12,
+  },
+  columnWrapper: {
+    justifyContent: 'space-between',
+    marginBottom: 10,
   },
   cropCard: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'center',
+    width: '31%',
+    backgroundColor: COLORS.white,
     borderWidth: 1.5,
     borderColor: '#EAEAEA',
     borderRadius: 16,
-    paddingVertical: 16,
-    paddingHorizontal: 20,
-    backgroundColor: COLORS.white,
+    paddingVertical: 12,
+    alignItems: 'center',
+    position: 'relative',
   },
   selectedCard: {
     borderColor: COLORS.black,
     borderWidth: 2,
-    backgroundColor: COLORS.Graycontainer || '#F2F2F2',
+    backgroundColor: '#F9F9F9',
   },
-  cropTitle: {
-    fontSize: FONTS.size.body,
+  cropIconPlaceholder: {
+    width: 36,
+    height: 36,
+    borderRadius: 18,
+    backgroundColor: '#EAEAEA',
+    marginBottom: 8,
+  },
+  cropName: {
+    fontSize: FONTS.size.body - 1,
     fontWeight: FONTS.weight.bold,
     color: COLORS.black,
-    marginBottom: 4,
+    marginBottom: 2,
   },
-  cropDesc: {
+  cropTime: {
     fontSize: FONTS.size.body - 2,
     color: COLORS.graytext,
   },
   badge: {
-    backgroundColor: '#E2F0D9',
-    paddingHorizontal: 10,
-    paddingVertical: 4,
-    borderRadius: 8,
+    marginTop: 6,
+    backgroundColor: '#F0F0F0',
+    paddingHorizontal: 8,
+    paddingVertical: 2,
+    borderRadius: 6,
   },
   badgeText: {
-    fontSize: FONTS.size.body - 2,
-    color: '#385723',
+    fontSize: 10,
+    color: COLORS.black,
     fontWeight: 'bold',
   },
-  nextButton: {
+  startButton: {
     backgroundColor: COLORS.black || '#1A1A1A',
     borderRadius: 16,
     paddingVertical: 16,
     alignItems: 'center',
+    marginTop: 8,
   },
   disabledButton: {
     opacity: 0.5,
   },
-  nextButtonText: {
+  startButtonText: {
     fontSize: FONTS.size.body,
     fontWeight: FONTS.weight.bold,
     color: COLORS.white,

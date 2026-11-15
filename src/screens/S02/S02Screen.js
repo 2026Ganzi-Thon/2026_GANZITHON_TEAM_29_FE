@@ -4,12 +4,14 @@ import {
   Text,
   Pressable,
   StyleSheet,
+  ActivityIndicator,
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS } from '../../styles/colors';
 import { FONTS } from '../../styles/fonts';
 import { commonStyles } from '../../styles/commonStyles';
+import { supabase } from '../../utils/supabase';
 
 import FarmScene3D from '../../components/farm/FarmScene3D';
 import TopHeaderCard from '../../components/common/TopHeaderCard';
@@ -17,6 +19,8 @@ import BottomNoticeToast from '../../components/common/BottomNoticeToast';
 
 export default function S02Screen({ navigation }) {
   const [currentTime, setCurrentTime] = useState('');
+  const [farmData, setFarmData] = useState(null);
+  const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const updateCurrentTime = () => {
@@ -32,12 +36,34 @@ export default function S02Screen({ navigation }) {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    fetchMyFarm();
+  }, []);
+
+  const fetchMyFarm = async () => {
+    try {
+      setLoading(true);
+      const { data, error } = await supabase.rpc('get_my_farm');
+
+      if (error) {
+        throw error;
+      }
+
+      setFarmData(data);
+    } catch (error) {
+      console.error('농장 데이터 조회 실패:', error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
   return (
     <View style={commonStyles.screen}>
       <View style={styles.farmBackground}>
         <FarmScene3D 
           cameraPos={[0, 5.0, 5.8]} 
           modelOffsetY={0.4} 
+          farmData={farmData} 
         />
       </View>
 
