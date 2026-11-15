@@ -14,15 +14,15 @@ const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
 export default function S04Screen({ route, navigation }) {
   const { plotIndex } = route.params || {};
-  const [selectedCondition, setSelectedCondition] = useState(null);
+  const [selectedEnergy, setSelectedEnergy] = useState(null);
 
   const handleNext = () => {
-    if (!selectedCondition) return;
-    navigation.navigate('S05', { plotIndex, condition: selectedCondition });
+    if (!selectedEnergy) return;
+    navigation.navigate('S05', { plotIndex, energy: selectedEnergy });
   };
 
   const handleSkip = () => {
-    navigation.navigate('S05', { plotIndex, condition: null });
+    navigation.navigate('S05', { plotIndex, energy: null });
   };
 
   const handleGoBack = () => {
@@ -59,9 +59,9 @@ export default function S04Screen({ route, navigation }) {
           <Pressable
             style={[
               styles.optionCard,
-              selectedCondition === 'low' && styles.selectedCard,
+              selectedEnergy === 'low' && styles.selectedCard,
             ]}
-            onPress={() => setSelectedCondition('low')}
+            onPress={() => setSelectedEnergy('low')}
           >
             <Text style={styles.cardTitle}>바닥이에요</Text>
             <Text style={styles.cardDesc}>아주 작게 시작해요</Text>
@@ -70,9 +70,9 @@ export default function S04Screen({ route, navigation }) {
           <Pressable
             style={[
               styles.optionCard,
-              selectedCondition === 'moderate' && styles.selectedCard,
+              selectedEnergy === 'medium' && styles.selectedCard,
             ]}
-            onPress={() => setSelectedCondition('moderate')}
+            onPress={() => setSelectedEnergy('medium')}
           >
             <Text style={styles.cardTitle}>그럭저럭</Text>
             <Text style={styles.cardDesc}>적당히 키워봐요</Text>
@@ -81,9 +81,9 @@ export default function S04Screen({ route, navigation }) {
           <Pressable
             style={[
               styles.optionCard,
-              selectedCondition === 'high' && styles.selectedCard,
+              selectedEnergy === 'high' && styles.selectedCard,
             ]}
-            onPress={() => setSelectedCondition('high')}
+            onPress={() => setSelectedEnergy('high')}
           >
             <Text style={styles.cardTitle}>충분해요</Text>
             <Text style={styles.cardDesc}>크게 키워봐요</Text>
@@ -95,7 +95,7 @@ export default function S04Screen({ route, navigation }) {
         </Pressable>
 
         <Pressable 
-          style={[styles.nextButton, !selectedCondition && styles.disabledButton]} 
+          style={[styles.nextButton, !selectedEnergy && styles.disabledButton]} 
           onPress={handleNext}
         >
           <Text style={styles.nextButtonText}>다음</Text>
