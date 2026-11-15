@@ -25,7 +25,6 @@ export default function S04Screen({ route, navigation }) {
     navigation.navigate('S05', { plotIndex, condition: null });
   };
 
-  // 💡 스택 히스토리가 없을 때 나는 에러를 방지하는 안전한 뒤로가기 함수
   const handleGoBack = () => {
     if (navigation.canGoBack()) {
       navigation.goBack();
