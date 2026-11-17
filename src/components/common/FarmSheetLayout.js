@@ -1,5 +1,5 @@
 import React from 'react';
-import { KeyboardAvoidingView, Platform, StyleSheet, View } from 'react-native';
+import { KeyboardAvoidingView, Platform, Pressable, StyleSheet, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { COLORS } from '../../styles/colors';
@@ -26,8 +26,9 @@ const FARM_CAMERA_ANGLE = 45;
  * farmArea: 기본 농장 대신 다른 3D 장면(수확 연출, 물 주기 연출 등)을 넣고 싶을 때 사용
  * farmHeight: 농장 높이를 고정하고 싶을 때 사용 (예: 기록 화면처럼 시트 내용이 긴 화면)
  *   → 농장은 이 높이로 고정되고, 아래 시트가 나머지 공간을 다 차지함
+ * onPressOutside: 시트 바깥(농장)을 눌렀을 때 실행 (예: 창 닫기)
  */
-export default function FarmSheetLayout({ children, farmArea, farmHeight }) {
+export default function FarmSheetLayout({ children, farmArea, farmHeight, onPressOutside }) {
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -40,6 +41,10 @@ export default function FarmSheetLayout({ children, farmArea, farmHeight }) {
             visibleWidth={FARM_VISIBLE_WIDTH}
             cameraAngle={FARM_CAMERA_ANGLE}
           />
+        )}
+
+        {onPressOutside && (
+          <Pressable style={StyleSheet.absoluteFill} onPress={onPressOutside} />
         )}
       </View>
 
