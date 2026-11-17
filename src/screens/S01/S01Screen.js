@@ -50,7 +50,6 @@ export default function S01Screen({ navigation }) {
   );
 }
 
-// S01Screen에는 컴포넌트 배치/레이아웃(위치) 잡는 최소한의 껍데기 스타일만 남김
 const styles = StyleSheet.create({
   farmBackground: {
     position: 'absolute',

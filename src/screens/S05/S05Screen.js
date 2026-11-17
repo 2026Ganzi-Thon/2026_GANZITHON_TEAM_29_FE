@@ -31,9 +31,10 @@ export default function S05Screen({ route, navigation }) {
   const fetchCrops = async () => {
     try {
       setLoading(true);
-      const { data, error } = await supabase.rpc('list_crops', {
-        p_energy: energy,
-      });
+
+      const queryParam = energy ? { p_energy: energy } : {}; 
+      
+      const { data, error } = await supabase.rpc('list_crops', queryParam);
 
       if (error) {
         throw error;
@@ -41,7 +42,7 @@ export default function S05Screen({ route, navigation }) {
 
       setCrops(data || []);
       if (data && data.length > 0) {
-        const recommended = data.find(c => c.is_recommended) || data[0];
+        const recommended = data.find(c => c.recommended || c.is_recommended) || data[0];
         setSelectedCrop(recommended);
       }
     } catch (error) {
@@ -53,7 +54,7 @@ export default function S05Screen({ route, navigation }) {
 
   const handleStartFocus = () => {
     if (!selectedCrop) return;
-    navigation.navigate('S06', { plotIndex, cropId: selectedCrop.id });
+    navigation.navigate('S06', { plotIndex, cropId: selectedCrop.crop_id || selectedCrop.id });
   };
 
   const handleGoBack = () => {
@@ -100,11 +101,13 @@ export default function S05Screen({ route, navigation }) {
           <FlatList
             data={crops}
             numColumns={3}
-            keyExtractor={(item, index) => item.id?.toString() || index.toString()}
+            keyExtractor={(item, index) => item.crop_id?.toString() || item.id?.toString() || index.toString()}
             contentContainerStyle={styles.gridContainer}
             columnWrapperStyle={styles.columnWrapper}
             renderItem={({ item }) => {
-              const isSelected = selectedCrop?.id === item.id;
+              const isSelected = selectedCrop?.crop_id === item.crop_id || selectedCrop?.id === item.id;
+              const minutes = Math.floor((item.target_seconds || 600) / 60);
+
               return (
                 <Pressable
                   style={[
@@ -115,8 +118,8 @@ export default function S05Screen({ route, navigation }) {
                 >
                   <View style={styles.cropIconPlaceholder} />
                   <Text style={styles.cropName}>{item.name}</Text>
-                  <Text style={styles.cropTime}>{item.target_time}분</Text>
-                  {item.is_recommended && (
+                  <Text style={styles.cropTime}>{minutes}분</Text>
+                  {(item.recommended || item.is_recommended) && (
                     <View style={styles.badge}>
                       <Text style={styles.badgeText}>추천</Text>
                     </View>
@@ -132,7 +135,7 @@ export default function S05Screen({ route, navigation }) {
           onPress={handleStartFocus}
         >
           <Text style={styles.startButtonText}>
-            {selectedCrop ? `${selectedCrop.name} 심기 · ${selectedCrop.target_time}분` : '작물을 선택해주세요'}
+            {selectedCrop ? `${selectedCrop.name} 심기 · ${Math.floor((selectedCrop.target_seconds || 600) / 60)}분` : '작물을 선택해주세요'}
           </Text>
         </Pressable>
       </View>

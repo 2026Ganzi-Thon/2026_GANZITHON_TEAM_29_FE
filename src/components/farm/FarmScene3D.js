@@ -1,36 +1,46 @@
 import React, { useEffect, useRef } from 'react';
-import { View, StyleSheet, TouchableWithoutFeedback, Dimensions } from 'react-native';
+import { View, StyleSheet } from 'react-native';
 import { GLView } from 'expo-gl';
 import { Renderer, THREE, TextureLoader } from 'expo-three';
 import { Asset } from 'expo-asset';
 import * as FileSystem from 'expo-file-system/legacy';
+import { File } from 'expo-file-system';
 import { encode } from 'base64-arraybuffer';
 import { GLTFLoader } from 'three-stdlib';
 
 global.THREE = global.THREE || THREE;
 
-const { width: SCREEN_WIDTH, height: SCREEN_HEIGHT } = Dimensions.get('window');
+// iOS는 fetch로 읽히고, 안드로이드는 fetch로 file://을 못 읽는 경우가 있어서 File로 한 번 더 시도
+async function readLocalFile(uri) {
+  try {
+    const response = await fetch(uri);
+    if (response.ok) return await response.arrayBuffer();
+  } catch (e) {
+    console.log('fetch로 GLB 읽기 실패, File로 다시 시도:', e?.message);
+  }
 
+  const file = new File(uri);
+  return await file.arrayBuffer();
+}
+
+// props (모두 선택)
+// - backgroundColor: 배경색 (예: 0xacd066)
+// - visibleWidth: 화면 가로에 보일 농장 폭. 작을수록 확대 (안 넘기면 기존 구도)
+// - cameraAngle: visibleWidth를 쓸 때 내려다보는 각도
 export default function FarmScene3D({
-  cameraPos = [0, 5.5, 6.2], 
-  cameraLookAt = [0, -0.2, 0], 
-  modelOffsetY = 0.8, 
-  plotsData = [],       
-  onSelectPlot,         
-  selectedPlotIndex = null,
+  backgroundColor = 0xf5f1e8,
+  visibleWidth,
+  cameraAngle = 50,
 }) {
   const animationRef = useRef(null);
   const mountedRef = useRef(true);
-  const raycasterRef = useRef(new THREE.Raycaster());
-  const mouseRef = useRef(new THREE.Vector2());
-  const sceneRef = useRef(null);
-  const cameraRef = useRef(null);
-  const plotsMapRef = useRef(new Map());
 
   useEffect(() => {
     mountedRef.current = true;
+
     return () => {
       mountedRef.current = false;
+
       if (animationRef.current !== null) {
         cancelAnimationFrame(animationRef.current);
         animationRef.current = null;
@@ -38,244 +48,269 @@ export default function FarmScene3D({
     };
   }, []);
 
-  useEffect(() => {
-    plotsMapRef.current.forEach((mesh, index) => {
-      if (!mesh.material) return;
-
-      if (!mesh.userData.clonedMaterial) {
-        mesh.userData.clonedMaterial = mesh.material.clone();
-        mesh.material = mesh.userData.clonedMaterial;
-      }
-
-      if (index === selectedPlotIndex) {
-        mesh.material.emissive = new THREE.Color(0xffd700);
-        mesh.material.emissiveIntensity = 0.8;
-      } else {
-        mesh.material.emissive = new THREE.Color(0x000000);
-        mesh.material.emissiveIntensity = 0;
-      }
-      mesh.material.needsUpdate = true;
-    });
-  }, [selectedPlotIndex]);
-
   const onContextCreate = async (gl) => {
     let renderer;
 
     try {
       const width = gl.drawingBufferWidth;
       const height = gl.drawingBufferHeight;
-      if (width === 0 || height === 0) return;
 
-      renderer = new Renderer({ gl, alpha: false, antialias: true });
+      console.log('GLView 크기:', width, height);
+
+      if (width === 0 || height === 0) {
+        throw new Error(
+          `GLView 크기가 올바르지 않습니다. width: ${width}, height: ${height}`
+        );
+      }
+
+      renderer = new Renderer({
+        gl,
+        alpha: false,
+        antialias: true,
+      });
+
       renderer.setSize(width, height);
       renderer.setPixelRatio(1);
 
-      const GRASS_COLOR = 0xA8D377;
-      renderer.setClearColor(GRASS_COLOR, 1);
-      
-      renderer.outputColorSpace = THREE.SRGBColorSpace;
+      renderer.setClearColor(backgroundColor, 1);
+      renderer.outputEncoding = THREE.sRGBEncoding;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.15; // 💡 명도(노출)를 살짝 높여 화사하게 조절
-
-      renderer.shadowMap.enabled = true;
-      renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+      renderer.toneMappingExposure = 0.8;
 
       gl.viewport(0, 0, width, height);
 
       const scene = new THREE.Scene();
-      scene.background = new THREE.Color(GRASS_COLOR);
-      sceneRef.current = scene;
+      scene.background = new THREE.Color(backgroundColor);
 
-      const camera = new THREE.PerspectiveCamera(35, width / height, 0.1, 1000);
-      camera.position.set(...cameraPos);
-      camera.lookAt(...cameraLookAt);
-      cameraRef.current = camera;
+      const camera = new THREE.PerspectiveCamera(
+        35,
+        width / height,
+        0.1,
+        1000
+      );
 
-      const ambientLight = new THREE.AmbientLight(0xffffff, 0.75); // 💡 주변광 밝기 상향
+      if (visibleWidth) {
+        const halfV = THREE.MathUtils.degToRad(camera.fov / 2);
+        const halfH = Math.atan(Math.tan(halfV) * camera.aspect);
+        const distance = visibleWidth / 2 / Math.tan(halfH);
+        const angle = THREE.MathUtils.degToRad(cameraAngle);
+
+        camera.position.set(
+          0,
+          distance * Math.sin(angle),
+          distance * Math.cos(angle)
+        );
+      } else {
+        camera.position.set(0, 5, 8);
+      }
+
+      camera.lookAt(0, 0, 0);
+
+      const ambientLight = new THREE.AmbientLight(
+        0xffffff,
+        0.8
+      );
       scene.add(ambientLight);
 
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.1); // 💡 메인 태양광 밝기 상향
-      directionalLight.position.set(10, 20, 10);
-      directionalLight.castShadow = true;
-      
-      directionalLight.shadow.mapSize.width = 1024;
-      directionalLight.shadow.mapSize.height = 1024;
-      directionalLight.shadow.camera.near = 0.5;
-      directionalLight.shadow.camera.far = 50;
-      const d = 10;
-      directionalLight.shadow.camera.left = -d;
-      directionalLight.shadow.camera.right = d;
-      directionalLight.shadow.camera.top = d;
-      directionalLight.shadow.camera.bottom = -d;
-      directionalLight.shadow.bias = -0.0005;
+      const directionalLight = new THREE.DirectionalLight(
+        0xffffff,
+        0.7
+      );
+
+      directionalLight.position.set(5, 8, 5);
       scene.add(directionalLight);
 
-      const fillLight = new THREE.DirectionalLight(0xddeeff, 0.4); // 💡 보조광도 살짝 상향
-      fillLight.position.set(-10, 10, -10);
-      scene.add(fillLight);
-
       const modelAsset = Asset.fromModule(
-        require('../../../assets/3d/farm_base.glb')
+        require('../../../assets/models/farms/farm_1.glb')
       );
+
       await modelAsset.downloadAsync();
+
       if (!mountedRef.current) return;
 
-      const response = await fetch(modelAsset.localUri);
-      const arrayBuffer = await response.arrayBuffer();
+      if (!modelAsset.localUri) {
+        throw new Error('GLB 파일 경로를 찾을 수 없습니다.');
+      }
+
+      const arrayBuffer = await readLocalFile(modelAsset.localUri);
+
+      if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+        throw new Error('GLB 파일을 읽을 수 없습니다.');
+      }
 
       const loader = new GLTFLoader();
       const textureLoader = new TextureLoader();
 
       loader.register((parser) => {
         const textureCache = new Map();
+
         parser.loadImageSource = async (sourceIndex) => {
           if (textureCache.has(sourceIndex)) {
-            return textureCache.get(sourceIndex).then((t) => t.clone());
+            return textureCache.get(sourceIndex).then(
+              (texture) => texture.clone()
+            );
           }
+
           const texturePromise = (async () => {
             const imageSource = parser.json.images[sourceIndex];
-            if (!imageSource) throw new Error();
+
+            if (!imageSource) {
+              throw new Error(
+                `텍스처 이미지 ${sourceIndex}를 찾을 수 없습니다.`
+              );
+            }
+
             if (imageSource.bufferView !== undefined) {
-              const imageBuffer = await parser.getDependency('bufferView', imageSource.bufferView);
+              const imageBuffer = await parser.getDependency(
+                'bufferView',
+                imageSource.bufferView
+              );
+
               const base64Data = encode(imageBuffer);
               const mimeType = imageSource.mimeType || 'image/png';
-              const extension = mimeType.split('/')[1].replace('jpeg', 'jpg');
 
-              const textureUri = `${FileSystem.cacheDirectory}farm_texture_${sourceIndex}.${extension}`;
-              await FileSystem.writeAsStringAsync(textureUri, base64Data, {
-                encoding: FileSystem.EncodingType.Base64,
-              });
+              const extension = mimeType
+                .split('/')[1]
+                .replace('jpeg', 'jpg');
 
-              if (!mountedRef.current) throw new Error();
-              const texture = await new Promise((resolve, reject) => {
-                textureLoader.load(textureUri, resolve, undefined, reject);
-              });
+              const textureUri =
+                `${FileSystem.cacheDirectory}` +
+                `farm_texture_${sourceIndex}.${extension}`;
+
+              await FileSystem.writeAsStringAsync(
+                textureUri,
+                base64Data,
+                {
+                  encoding: FileSystem.EncodingType.Base64,
+                }
+              );
+
+              if (!mountedRef.current) {
+                throw new Error('화면이 종료되었습니다.');
+              }
+
+              const texture = await new Promise(
+                (resolve, reject) => {
+                  textureLoader.load(
+                    textureUri,
+                    resolve,
+                    undefined,
+                    reject
+                  );
+                }
+              );
+
               texture.flipY = false;
-              texture.colorSpace = THREE.SRGBColorSpace;
+              texture.encoding = THREE.sRGBEncoding;
+
               return texture;
             }
+
+            throw new Error(
+              `지원하지 않는 텍스처 형식입니다: ${sourceIndex}`
+            );
           })();
+
           textureCache.set(sourceIndex, texturePromise);
+
           return texturePromise;
         };
-        return { name: 'RNTextureLoader' };
+
+        return {
+          name: 'RNTextureLoader',
+        };
       });
 
       const gltf = await new Promise((resolve, reject) => {
-        loader.parse(arrayBuffer, '', resolve, reject);
+        loader.parse(
+          arrayBuffer,
+          '',
+          resolve,
+          reject
+        );
       });
 
       if (!mountedRef.current) return;
 
       const farmModel = gltf.scene;
-      
-      plotsMapRef.current.clear();
-      farmModel.traverse((child) => {
-        if (child.isMesh) {
-          child.castShadow = true;
-          child.receiveShadow = true;
-
-          if (child.material) {
-            child.material.roughness = 0.6;
-            child.material.metalness = 0.1;
-            child.material.needsUpdate = true;
-          }
-          
-          if (child.name && child.name.toLowerCase().startsWith('plot')) {
-            const match = child.name.match(/\d+/);
-            if (match) {
-              const plotIndex = parseInt(match[0], 10);
-              plotsMapRef.current.set(plotIndex, child);
-            }
-          }
-        }
-      });
 
       farmModel.updateMatrixWorld(true);
 
-      const boundingBox = new THREE.Box3().setFromObject(farmModel);
+      const boundingBox = new THREE.Box3().setFromObject(
+        farmModel
+      );
+
       const center = new THREE.Vector3();
       const size = new THREE.Vector3();
+
       boundingBox.getCenter(center);
       boundingBox.getSize(size);
 
+      console.log('농장 모델 중심:', center);
+      console.log('농장 모델 크기:', size);
+
       farmModel.position.sub(center);
 
-      const maxDimension = Math.max(size.x, size.y, size.z);
+      const maxDimension = Math.max(
+        size.x,
+        size.y,
+        size.z
+      );
+
       if (maxDimension > 0) {
-        const scale = 3.2 / maxDimension;
+        const scale = 3.5 / maxDimension;
         farmModel.scale.multiplyScalar(scale);
       }
-      
-      farmModel.position.y += modelOffsetY;
+
       scene.add(farmModel);
+
+      console.log('농장 3D 모델 및 텍스처 로딩 성공');
 
       const render = () => {
         if (!mountedRef.current) return;
+
         animationRef.current = requestAnimationFrame(render);
+
         renderer.render(scene, camera);
         gl.endFrameEXP();
       };
+
       render();
+
     } catch (error) {
-      console.error(error);
-    }
-  };
-
-  const handleTouch = (event) => {
-    if (!cameraRef.current || !sceneRef.current || !onSelectPlot) return;
-
-    const { nativeEvent } = event;
-    const x = nativeEvent.locationX;
-    const y = nativeEvent.locationY;
-
-    mouseRef.current.x = (x / SCREEN_WIDTH) * 2 - 1;
-    mouseRef.current.y = -(y / SCREEN_HEIGHT) * 2 + 1;
-
-    raycasterRef.current.setFromCamera(mouseRef.current, cameraRef.current);
-    
-    const plotMeshes = Array.from(plotsMapRef.current.values());
-    const intersects = raycasterRef.current.intersectObjects(plotMeshes, true);
-
-    if (intersects.length > 0) {
-      const hitMesh = intersects[0].object;
-      
-      let foundIndex = null;
-      for (let [index, mesh] of plotsMapRef.current.entries()) {
-        if (mesh === hitMesh) {
-          foundIndex = index;
-          break;
-        }
-      }
-
-      if (foundIndex !== null) {
-        onSelectPlot(foundIndex);
-      }
+      console.error('농장 3D 모델 로딩 실패:', error);
     }
   };
 
   return (
-    <TouchableWithoutFeedback onPress={handleTouch}>
-      <View style={styles.container}>
-        <GLView style={styles.glView} onContextCreate={onContextCreate} />
-      </View>
-    </TouchableWithoutFeedback>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: `#${backgroundColor.toString(16).padStart(6, '0')}` },
+      ]}
+    >
+      <GLView
+        style={styles.glView}
+        onContextCreate={onContextCreate}
+      />
+    </View>
   );
 }
 
 const styles = StyleSheet.create({
-  container: { 
-    position: 'absolute', 
-    top: 0, 
-    left: 0, 
-    right: 0, 
-    bottom: 0, 
-    width: '100%', 
-    height: '100%', 
-    backgroundColor: '#A8D377' 
+  container: {
+    position: 'absolute',
+    top: 0,
+    left: 0,
+    right: 0,
+    bottom: 0,
+    width: '100%',
+    height: '100%',
+    backgroundColor: '#F5F1E8',
   },
-  glView: { 
-    width: '100%', 
-    height: '100%' 
+
+  glView: {
+    width: '100%',
+    height: '100%',
   },
 });

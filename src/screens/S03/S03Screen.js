@@ -4,12 +4,14 @@ import {
   Text,
   Pressable,
   StyleSheet,
+  ActivityIndicator,
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS } from '../../styles/colors';
 import { FONTS } from '../../styles/fonts';
 import { commonStyles } from '../../styles/commonStyles';
+import { supabase } from '../../utils/supabase';
 
 import FarmScene3D from '../../components/farm/FarmScene3D';
 import TopHeaderCard from '../../components/common/TopHeaderCard';
@@ -18,11 +20,14 @@ import BottomNoticeToast from '../../components/common/BottomNoticeToast';
 export default function S03Screen({ navigation }) {
   const [currentTime, setCurrentTime] = useState('');
   const [selectedPlot, setSelectedPlot] = useState(null);
+  const [plotsData, setPlotsData] = useState([]);
+  const [loading, setLoading] = useState(true);
   
 
-  const [plotsData, setPlotsData] = useState(
-    Array.from({ length: 12 }, (_, index) => ({ id: index, cropType: null, stage: 0 }))
-  );
+  const [todayStats, setTodayStats] = useState({
+    totalSeconds: 0,
+    harvestCount: 0,
+  });
 
   useEffect(() => {
     const updateCurrentTime = () => {
@@ -38,15 +43,86 @@ export default function S03Screen({ navigation }) {
     return () => clearInterval(interval);
   }, []);
 
+  useEffect(() => {
+    fetchMyFarmData();
+  }, []);
+
+  const fetchMyFarmData = async () => {
+    try {
+      setLoading(true);
+
+      const { data, error } = await supabase.rpc('get_my_farm');
+      if (error) throw error;
+
+      const formattedPlots = Array.from({ length: 12 }, (_, index) => {
+        const plotIndex = index + 1;
+        const serverPlot = data?.find(item => item.plot_index === plotIndex);
+
+        return {
+          id: plotIndex,
+          plotId: serverPlot?.plot_id || null,
+          farmStatus: serverPlot?.farm_status || 'empty',
+          sessionId: serverPlot?.session_id || null,
+          sessionStatus: serverPlot?.session_status || null,
+          cropId: serverPlot?.crop_id || null,
+          cropName: serverPlot?.crop_name || null,
+          targetSeconds: serverPlot?.target_seconds || null,
+          harvestId: serverPlot?.harvest_id || null,
+          isAutoHarvest: serverPlot?.is_auto_harvest || false,
+          focusedSeconds: serverPlot?.focused_seconds || 0,
+        };
+      });
+
+      setPlotsData(formattedPlots);
+
+
+      let calculatedSeconds = 0;
+      let calculatedHarvests = 0;
+
+      data?.forEach(item => {
+
+        if (item.focused_seconds) {
+          calculatedSeconds += item.focused_seconds;
+        }
+        if (item.farmStatus === 'harvested' || item.harvest_id || item.status === 'harvested') {
+          calculatedHarvests += 1;
+        }
+      });
+
+      setTodayStats({
+        totalSeconds: calculatedSeconds,
+        harvestCount: calculatedHarvests,
+      });
+
+      const unacknowledgedHarvestIds = data
+        ?.filter(item => item.is_auto_harvest && !item.acknowledged && item.harvest_id)
+        .map(item => item.harvest_id);
+
+      if (unacknowledgedHarvestIds && unacknowledgedHarvestIds.length > 0) {
+        await supabase.rpc('ack_auto_harvest_notice', { p_harvest_ids: unacknowledgedHarvestIds });
+      }
+
+    } catch (error) {
+      console.error('S03 데이터 초기화 실패:', error.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSelectPlot = (index) => {
     setSelectedPlot(index); 
 
-    if (!plotsData[index].cropType) {
+    const targetPlot = plotsData[index];
+    if (!targetPlot || targetPlot.farmStatus === 'empty') {
       setTimeout(() => {
-        navigation.navigate('S04', { plotIndex: index });
+        navigation.navigate('S04', { plotIndex: index + 1 });
       }, 150); 
     }
+  };
+
+  const formatMinutes = (seconds) => {
+    const mins = Math.floor(seconds / 60);
+    return `${mins}분`;
   };
 
   return (
@@ -79,7 +155,9 @@ export default function S03Screen({ navigation }) {
 
             <View style={styles.statsContainer}>
               <Text style={styles.statsLabel}>오늘 키운 시간</Text>
-              <Text style={styles.statsValue}>10분 · 수확 1개</Text>
+              <Text style={styles.statsValue}>
+                {formatMinutes(todayStats.totalSeconds)} · 수확 {todayStats.harvestCount}개
+              </Text>
             </View>
           </TopHeaderCard>
         </View>
