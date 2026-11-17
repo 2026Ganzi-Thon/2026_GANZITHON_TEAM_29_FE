@@ -1,16 +1,37 @@
-
 import React, { useEffect, useRef } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { GLView } from 'expo-gl';
 import { Renderer, THREE, TextureLoader } from 'expo-three';
 import { Asset } from 'expo-asset';
 import * as FileSystem from 'expo-file-system/legacy';
+import { File } from 'expo-file-system';
 import { encode } from 'base64-arraybuffer';
 import { GLTFLoader } from 'three-stdlib';
 
 global.THREE = global.THREE || THREE;
 
-export default function FarmScene3D() {
+// iOS는 fetch로 읽히고, 안드로이드는 fetch로 file://을 못 읽는 경우가 있어서 File로 한 번 더 시도
+async function readLocalFile(uri) {
+  try {
+    const response = await fetch(uri);
+    if (response.ok) return await response.arrayBuffer();
+  } catch (e) {
+    console.log('fetch로 GLB 읽기 실패, File로 다시 시도:', e?.message);
+  }
+
+  const file = new File(uri);
+  return await file.arrayBuffer();
+}
+
+// props (모두 선택)
+// - backgroundColor: 배경색 (예: 0xacd066)
+// - visibleWidth: 화면 가로에 보일 농장 폭. 작을수록 확대 (안 넘기면 기존 구도)
+// - cameraAngle: visibleWidth를 쓸 때 내려다보는 각도
+export default function FarmScene3D({
+  backgroundColor = 0xf5f1e8,
+  visibleWidth,
+  cameraAngle = 50,
+}) {
   const animationRef = useRef(null);
   const mountedRef = useRef(true);
 
@@ -51,7 +72,7 @@ export default function FarmScene3D() {
       renderer.setSize(width, height);
       renderer.setPixelRatio(1);
 
-      renderer.setClearColor(0xf5f1e8, 1);
+      renderer.setClearColor(backgroundColor, 1);
       renderer.outputEncoding = THREE.sRGBEncoding;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
       renderer.toneMappingExposure = 0.8;
@@ -59,7 +80,7 @@ export default function FarmScene3D() {
       gl.viewport(0, 0, width, height);
 
       const scene = new THREE.Scene();
-      scene.background = new THREE.Color(0xf5f1e8);
+      scene.background = new THREE.Color(backgroundColor);
 
       const camera = new THREE.PerspectiveCamera(
         35,
@@ -68,7 +89,21 @@ export default function FarmScene3D() {
         1000
       );
 
-      camera.position.set(0, 5, 8);
+      if (visibleWidth) {
+        const halfV = THREE.MathUtils.degToRad(camera.fov / 2);
+        const halfH = Math.atan(Math.tan(halfV) * camera.aspect);
+        const distance = visibleWidth / 2 / Math.tan(halfH);
+        const angle = THREE.MathUtils.degToRad(cameraAngle);
+
+        camera.position.set(
+          0,
+          distance * Math.sin(angle),
+          distance * Math.cos(angle)
+        );
+      } else {
+        camera.position.set(0, 5, 8);
+      }
+
       camera.lookAt(0, 0, 0);
 
       const ambientLight = new THREE.AmbientLight(
@@ -97,17 +132,14 @@ export default function FarmScene3D() {
         throw new Error('GLB 파일 경로를 찾을 수 없습니다.');
       }
 
-      const response = await fetch(modelAsset.localUri);
+      const arrayBuffer = await readLocalFile(modelAsset.localUri);
 
-      if (!response.ok) {
+      if (!arrayBuffer || arrayBuffer.byteLength === 0) {
         throw new Error('GLB 파일을 읽을 수 없습니다.');
       }
 
-      const arrayBuffer = await response.arrayBuffer();
-
       const loader = new GLTFLoader();
       const textureLoader = new TextureLoader();
-
 
       loader.register((parser) => {
         const textureCache = new Map();
@@ -251,7 +283,12 @@ export default function FarmScene3D() {
   };
 
   return (
-    <View style={styles.container}>
+    <View
+      style={[
+        styles.container,
+        { backgroundColor: `#${backgroundColor.toString(16).padStart(6, '0')}` },
+      ]}
+    >
       <GLView
         style={styles.glView}
         onContextCreate={onContextCreate}
