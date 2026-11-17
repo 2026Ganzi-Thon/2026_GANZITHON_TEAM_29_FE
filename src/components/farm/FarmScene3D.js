@@ -1,4 +1,3 @@
-
 import React, { useEffect, useRef } from 'react';
 import { View, StyleSheet } from 'react-native';
 import { GLView } from 'expo-gl';
@@ -11,11 +10,23 @@ import { GLTFLoader } from 'three-stdlib';
 
 global.THREE = global.THREE || THREE;
 
-// props (모두 선택 사항 · 안 넘기면 기존 화면(S01 등) 그대로 보임)
-// - backgroundColor: 3D 배경색 (숫자 hex, 예: 0xacd066)
-// - visibleWidth: 넘기면 "농장이 화면 가로를 꽉 채우는" 구도로 카메라를 맞춤 (S10~S19 디자인 구도)
-//     화면 가로에 보일 농장 폭이에요. 농장 모델 전체 폭이 3.5라서, 숫자가 작을수록 확대돼요.
-// - cameraAngle: visibleWidth를 쓸 때 내려다보는 각도(도). 클수록 위에서 내려다봐요.
+// iOS는 fetch로 읽히고, 안드로이드는 fetch로 file://을 못 읽는 경우가 있어서 File로 한 번 더 시도
+async function readLocalFile(uri) {
+  try {
+    const response = await fetch(uri);
+    if (response.ok) return await response.arrayBuffer();
+  } catch (e) {
+    console.log('fetch로 GLB 읽기 실패, File로 다시 시도:', e?.message);
+  }
+
+  const file = new File(uri);
+  return await file.arrayBuffer();
+}
+
+// props (모두 선택)
+// - backgroundColor: 배경색 (예: 0xacd066)
+// - visibleWidth: 화면 가로에 보일 농장 폭. 작을수록 확대 (안 넘기면 기존 구도)
+// - cameraAngle: visibleWidth를 쓸 때 내려다보는 각도
 export default function FarmScene3D({
   backgroundColor = 0xf5f1e8,
   visibleWidth,
@@ -79,7 +90,6 @@ export default function FarmScene3D({
       );
 
       if (visibleWidth) {
-        // 화면 비율에 맞춰, 농장이 가로로 visibleWidth만큼 보이는 거리 계산
         const halfV = THREE.MathUtils.degToRad(camera.fov / 2);
         const halfH = Math.atan(Math.tan(halfV) * camera.aspect);
         const distance = visibleWidth / 2 / Math.tan(halfH);
@@ -122,22 +132,14 @@ export default function FarmScene3D({
         throw new Error('GLB 파일 경로를 찾을 수 없습니다.');
       }
 
-      // 안드로이드에서는 fetch로 기기 안의 파일(file://)을 못 읽는 경우가 있어서
-      // expo-file-system의 File로 직접 읽음
-      console.log('GLB 경로:', modelAsset.localUri);
-
-      const glbFile = new File(modelAsset.localUri);
-      const arrayBuffer = await glbFile.arrayBuffer();
+      const arrayBuffer = await readLocalFile(modelAsset.localUri);
 
       if (!arrayBuffer || arrayBuffer.byteLength === 0) {
         throw new Error('GLB 파일을 읽을 수 없습니다.');
       }
 
-      console.log('GLB 크기(byte):', arrayBuffer.byteLength);
-
       const loader = new GLTFLoader();
       const textureLoader = new TextureLoader();
-
 
       loader.register((parser) => {
         const textureCache = new Map();

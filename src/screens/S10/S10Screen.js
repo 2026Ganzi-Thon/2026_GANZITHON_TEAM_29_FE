@@ -6,27 +6,20 @@ import AppButton from '../../components/common/AppButton';
 import { COLORS } from '../../styles/colors';
 import { eulReul } from '../../utils/josa';
 
-// S10 · 수확 완료 화면
-// - [쉬어가기] → S11 (물 주며 쉬기)
-// - [건너뛰기] → 쉬어가기 안내 박스만 닫힘
-// - [농장으로 가기] → S03
+// S10 수확 완료
 export default function S10Screen({ navigation, route }) {
-  // 이전 화면(S17)에서 넘겨준 값. 아직 안 넘어오면 개발용 기본값 사용
   const { cropName = '당근', minutes = 20 } = route.params ?? {};
 
   const [showRestCard, setShowRestCard] = useState(true);
   const [memo, setMemo] = useState('');
 
   const goToFarm = () => {
-    // TODO: 백엔드 연결되면 memo(오늘 한 줄) 서버에 저장하기
-
-    // popTo: 스택에 이미 S03이 있으면 그 화면으로 돌아감 (화면이 계속 쌓이는 것 방지)
+    // TODO: 오늘 한 줄(memo) 서버 저장
     navigation.popTo('S03', { justHarvested: true });
   };
 
   return (
-    // TODO(3D 2번 파트): 작물이 밭에서 튀어 오르며 반짝이는 수확 연출(1.5초)
-    //   → 완성되면 <FarmSheetLayout farmArea={<수확장면 />}> 형태로 넣기
+    // TODO: 수확 3D 연출 (작물이 밭에서 튀어 오르며 반짝임, 1.5초)
     <FarmSheetLayout>
       <Text style={styles.title}>{eulReul(cropName)} 수확했어요!</Text>
       <Text style={styles.subtitle}>{minutes}분 동안 함께 키웠어요</Text>
@@ -54,7 +47,7 @@ export default function S10Screen({ navigation, route }) {
       <TextInput
         style={styles.memoInput}
         placeholder="오늘 한 줄 남기기 (선택)"
-        placeholderTextColor={COLORS.darkGray}
+        placeholderTextColor="#A6A6A6"
         value={memo}
         onChangeText={setMemo}
         maxLength={50}
@@ -101,7 +94,7 @@ const styles = StyleSheet.create({
   },
 
   restButton: {
-    flex: 1, // 두 버튼이 반반씩 나눠 가짐
+    flex: 1,
     width: undefined,
   },
 
@@ -115,5 +108,6 @@ const styles = StyleSheet.create({
     borderRadius: 12,
     fontSize: 14,
     color: COLORS.black,
+    backgroundColor: COLORS.white,
   },
 });
