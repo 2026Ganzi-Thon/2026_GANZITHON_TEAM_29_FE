@@ -11,8 +11,8 @@ const GRASS = '#ACD066';
 
 // 디자인 구도: 농장이 화면 가로를 꽉 채우고, 위에서 비스듬히 내려다보는 느낌
 // 폰에서 보고 더 확대하고 싶으면 FARM_VISIBLE_WIDTH를 줄이고, 더 위에서 보고 싶으면 FARM_CAMERA_ANGLE을 키우기
-const FARM_VISIBLE_WIDTH = 2.9;
-const FARM_CAMERA_ANGLE = 50;
+const FARM_VISIBLE_WIDTH = 3.3;
+const FARM_CAMERA_ANGLE = 45;
 
 /**
  * 위에는 3D 농장, 아래에는 흰색 시트가 올라오는 공통 화면 틀
@@ -24,14 +24,16 @@ const FARM_CAMERA_ANGLE = 50;
  *   </FarmSheetLayout>
  *
  * farmArea: 기본 농장 대신 다른 3D 장면(수확 연출, 물 주기 연출 등)을 넣고 싶을 때 사용
+ * farmHeight: 농장 높이를 고정하고 싶을 때 사용 (예: 기록 화면처럼 시트 내용이 긴 화면)
+ *   → 농장은 이 높이로 고정되고, 아래 시트가 나머지 공간을 다 차지함
  */
-export default function FarmSheetLayout({ children, farmArea }) {
+export default function FarmSheetLayout({ children, farmArea, farmHeight }) {
   return (
     <KeyboardAvoidingView
       style={styles.container}
       behavior={Platform.OS === 'ios' ? 'padding' : undefined}
     >
-      <View style={styles.farmArea}>
+      <View style={farmHeight ? { height: farmHeight } : styles.farmArea}>
         {farmArea ?? (
           <FarmScene3D
             backgroundColor={GRASS_HEX}
@@ -41,7 +43,10 @@ export default function FarmSheetLayout({ children, farmArea }) {
         )}
       </View>
 
-      <SafeAreaView edges={['bottom']} style={styles.sheet}>
+      <SafeAreaView
+        edges={['bottom']}
+        style={[styles.sheet, farmHeight && styles.sheetFill]}
+      >
         {children}
       </SafeAreaView>
     </KeyboardAvoidingView>
@@ -67,5 +72,9 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     backgroundColor: COLORS.white,
+  },
+
+  sheetFill: {
+    flex: 1,
   },
 });
