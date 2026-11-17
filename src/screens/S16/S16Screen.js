@@ -1,23 +1,7 @@
-﻿import React from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React from 'react';
 
-export default function S16Screen() {
-  return (
-    <View style={styles.container}>
-      <Text style={styles.text}>S16 Screen</Text>
-    </View>
-  );
+import RecordView from '../../components/record/RecordView';
+
+export default function S16Screen({ navigation }) {
+  return <RecordView navigation={navigation} initialTab="today" />;
 }
-
-const styles = StyleSheet.create({
-  container: {
-    flex: 1,
-    justifyContent: 'center',
-    alignItems: 'center',
-    backgroundColor: '#fff',
-  },
-  text: {
-    fontSize: 18,
-    fontWeight: 'bold',
-  },
-});
