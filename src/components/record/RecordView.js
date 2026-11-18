@@ -7,10 +7,9 @@ import DeleteRecordsDialog from './DeleteRecordsDialog';
 import { COLORS } from '../../styles/colors';
 import { formatMinutes } from '../../utils/time';
 import { MOCK_ALL, MOCK_TODAY, MOCK_WEEK } from '../../data/mockRecords';
+import { signOut } from '../../lib/auth';
 
-// 기록 화면 공통 (S14 오늘 / S15 이번 주 / S15-1 전체)
-// 세 화면은 탭만 다르고 구성이 같아서 하나로 만들고, 탭을 누르면 화면 안에서 내용만 바뀜
-// [기록 모두 지우기] → S16 확인 창(DeleteRecordsDialog)이 이 화면 위에 뜸
+// S14 오늘 / S15 이번 주 / S15-1 전체
 
 const TABS = [
   { key: 'today', label: '오늘' },
@@ -18,9 +17,8 @@ const TABS = [
   { key: 'all', label: '전체' },
 ];
 
-const LIGHT_GRAY_TEXT = '#A6A6A6'; // "쉬어간 날" 글자색
+const LIGHT_GRAY_TEXT = '#A6A6A6';
 
-// [{name:'당근', count:2}, ...] 여러 개를 작물별로 합치기
 function mergeCrops(rows) {
   const counts = {};
   rows.forEach((row) => {
@@ -33,7 +31,7 @@ function mergeCrops(rows) {
     .sort((a, b) => b.count - a.count);
 }
 
-// "당근 2개, 토마토 1개 외 4개" 처럼 많이 키운 2개만 보여주고 나머지는 "외 N개"
+// 당근 2개, 토마토 1개 외 4개
 function describeCrops(crops) {
   if (crops.length === 0) return null;
 
@@ -43,7 +41,6 @@ function describeCrops(crops) {
   return restCount > 0 ? `${top.join(', ')} 외 ${restCount}개` : top.join(', ');
 }
 
-// "당근 3, 토마토 2" (목록 한 줄용)
 function cropsInline(crops) {
   return crops.map(({ name, count }) => `${name} ${count}`).join(', ');
 }
@@ -58,17 +55,25 @@ export default function RecordView({ navigation, initialTab = 'today' }) {
     all: MOCK_ALL,
   });
 
-  // S16 삭제 확인 창 보이기/숨기기
   const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
 
   const deleteAllRecords = () => {
     // TODO: 서버에서 기록 삭제하는 API 호출
     setRecords({
       today: [],
-      week: records.week.map((row) => ({ ...row, minutes: 0, crops: [] })), // 요일은 남기고 전부 "쉬어간 날"
+      week: records.week.map((row) => ({ ...row, minutes: 0, crops: [] })),
       all: [],
     });
     setDeleteDialogVisible(false);
+  };
+
+  // 로그아웃되면 AppNavigator가 S18로 보내줌
+  const logout = async () => {
+    try {
+      await signOut();
+    } catch (e) {
+      console.error('로그아웃 실패:', e);
+    }
   };
 
   const goBack = () => {
@@ -76,7 +81,6 @@ export default function RecordView({ navigation, initialTab = 'today' }) {
     else navigation.navigate('S03');
   };
 
-  // 탭마다 [요약 카드 제목, 합계 시간, 목록, 아래 한 줄 요약]
   let summaryLabel;
   let totalMinutes;
   let list;
@@ -105,7 +109,6 @@ export default function RecordView({ navigation, initialTab = 'today' }) {
   }
 
   return (
-    // 기록이 길어서 3D 농장을 작게 표시
     <FarmSheetLayout farmHeight={230}>
       <ScrollView showsVerticalScrollIndicator={false}>
         <Pressable onPress={goBack} hitSlop={12} style={styles.backButton}>
@@ -151,6 +154,9 @@ export default function RecordView({ navigation, initialTab = 'today' }) {
           variant="text"
           onPress={() => setDeleteDialogVisible(true)}
         />
+
+        {/* TODO: 로그아웃 버튼 위치는 디자인 확정 후 옮기기 */}
+        <AppButton title="로그아웃" variant="text" onPress={logout} />
       </ScrollView>
 
       <DeleteRecordsDialog
@@ -162,7 +168,6 @@ export default function RecordView({ navigation, initialTab = 'today' }) {
   );
 }
 
-// 오늘 탭 한 줄: [작물 아이콘] 새싹채소 × 1 ........ 10분
 function TodayRow({ item }) {
   return (
     <View style={styles.todayRow}>
@@ -178,7 +183,6 @@ function TodayRow({ item }) {
   );
 }
 
-// 이번 주 / 전체 탭 한 줄: 월  40분 · 당근 2   (없으면 "쉬어간 날")
 function PeriodRow({ row, wideLabel = false }) {
   const rested = row.crops.length === 0;
 
@@ -275,7 +279,6 @@ const styles = StyleSheet.create({
     textAlign: 'center',
   },
 
-  // 오늘 탭
   todayRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -309,7 +312,6 @@ const styles = StyleSheet.create({
     color: COLORS.graytext,
   },
 
-  // 이번 주 / 전체 탭
   periodRow: {
     flexDirection: 'row',
     alignItems: 'center',
@@ -324,7 +326,7 @@ const styles = StyleSheet.create({
   },
 
   periodLabelWide: {
-    width: 48, // "11월"처럼 글자가 길어서
+    width: 48,
   },
 
   periodText: {
