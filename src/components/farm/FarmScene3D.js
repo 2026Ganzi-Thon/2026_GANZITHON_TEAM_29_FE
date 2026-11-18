@@ -30,7 +30,7 @@ const CROP_MESH_MAP = {
   '옥수수_새싹': 'cartoon_vegetables_3d_model001',
   '옥수수_1': 'plant_seedling_3d_model010',
   '옥수수_2': 'plant_seedling_3d_model011',
-  '옥수수_3': 'cartoon_vegetables_3d_model010',
+  '옥수수_3': 'plant_seedling_3d_model010',
 
   '딸기_새싹': 'cartoon_vegetables_3d_model001',
   '딸기_1': 'plant_seedling_3d_model013',
@@ -66,7 +66,7 @@ function createSafeGLTFLoader(prefix) {
       }
       const texturePromise = (async () => {
         const imageSource = parser.json.images[sourceIndex];
-        if (!imageSource) throw new Error(`텍스처 ${sourceIndex} 없음`);
+        if (!imageSource) throw new Error('텍스처 없음');
         const imageBuffer = await parser.getDependency('bufferView', imageSource.bufferView);
         const base64Data = encode(imageBuffer);
         const textureUri = `${FileSystem.cacheDirectory}${prefix}_texture_${sourceIndex}.png`;
@@ -89,6 +89,18 @@ function createSafeGLTFLoader(prefix) {
   return loader;
 }
 
+function safeConfigureMaterial(mat) {
+  if (!mat) return mat;
+  if ('roughness' in mat) mat.roughness = 0.6;
+  if ('metalness' in mat) mat.metalness = 0.1;
+  if (mat.map) {
+    mat.map.encoding = THREE.sRGBEncoding;
+    mat.map.flipY = false;
+  }
+  mat.needsUpdate = true;
+  return mat;
+}
+
 let farmModelPromise = null;
 async function loadFarmModel() {
   if (!farmModelPromise) {
@@ -98,17 +110,15 @@ async function loadFarmModel() {
       const arrayBuffer = await readLocalFile(modelAsset.localUri);
       const loader = createSafeGLTFLoader('farm');
       const gltf = await new Promise((resolve, reject) => loader.parse(arrayBuffer, '', resolve, reject));
-      
+
       const farmModel = gltf.scene;
       farmModel.traverse((child) => {
-        if (child.isMesh && child.material) {
-          child.material.roughness = 0.6;
-          child.material.metalness = 0.1;
-          if (child.material.map) {
-            child.material.map.encoding = THREE.sRGBEncoding;
-            child.material.map.flipY = false;
+        if (child.isMesh) {
+          if (Array.isArray(child.material)) {
+            child.material = child.material.map((m) => safeConfigureMaterial(m.clone()));
+          } else if (child.material) {
+            child.material = safeConfigureMaterial(child.material.clone());
           }
-          child.material.needsUpdate = true;
         }
       });
 
@@ -140,14 +150,14 @@ async function loadCropsModel() {
       const cropBuffer = await readLocalFile(cropAsset.localUri);
       const cropLoader = createSafeGLTFLoader('crop');
       const cropGltf = await new Promise((resolve, reject) => cropLoader.parse(cropBuffer, '', resolve, reject));
-      
+
       cropGltf.scene.traverse((child) => {
-        if (child.isMesh && child.material) {
-          if (child.material.map) {
-            child.material.map.encoding = THREE.sRGBEncoding;
-            child.material.map.flipY = false;
+        if (child.isMesh) {
+          if (Array.isArray(child.material)) {
+            child.material.forEach(safeConfigureMaterial);
+          } else if (child.material) {
+            safeConfigureMaterial(child.material);
           }
-          child.material.needsUpdate = true;
         }
       });
       return cropGltf.scene;
@@ -206,11 +216,14 @@ function FarmCanvas({
   const sceneRef = useRef(null);
   const farmModelRef = useRef(null);
   const cropsGroupRef = useRef(null);
+  const needsRenderLogRef = useRef(false);
   const plotMeshesRef = useRef([]);
   const plotCentersRef = useRef([]);
   const layoutRef = useRef({ width: 0, height: 0 });
   const touchStartRef = useRef(null);
   const isSceneReadyRef = useRef(false);
+  const isUpdatingRef = useRef(false);
+  const pendingUpdateRef = useRef(false);
 
   const selectedPlotIndexRef = useRef(selectedPlotIndex);
   const onSelectPlotRef = useRef(onSelectPlot);
@@ -218,10 +231,9 @@ function FarmCanvas({
 
   useEffect(() => { selectedPlotIndexRef.current = selectedPlotIndex; }, [selectedPlotIndex]);
   useEffect(() => { onSelectPlotRef.current = onSelectPlot; }, [onSelectPlot]);
-  
+
   useEffect(() => {
     plotsDataRef.current = plotsData;
-    // 💡 씬이 완전히 준비된 이후에만 안전하게 작물 업데이트 실행 (진입 시 튕김 방지)
     if (isSceneReadyRef.current && sceneRef.current && farmModelRef.current) {
       updateCrops();
     }
@@ -239,25 +251,36 @@ function FarmCanvas({
       const pIdx = mesh.userData.plotIndex;
       if (!mesh.material) return;
 
-      if (!mesh.userData.originalColor) {
-        mesh.userData.originalColor = mesh.material.color.clone();
-      }
-      if (!mesh.userData.clonedMaterial) {
-        mesh.userData.clonedMaterial = mesh.material.clone();
-        mesh.material = mesh.userData.clonedMaterial;
-      }
+      const applySelectionStyle = (mat) => {
+        if (!mat) return;
+        if (!mat.userData.originalColor) {
+          mat.userData.originalColor = mat.color ? mat.color.clone() : new THREE.Color(0xffffff);
+        }
 
-      const isSelected = pIdx === selectedPlotIndex;
-      if (isSelected) {
-        mesh.material.color.setHex(0xffea75);
-        mesh.material.emissive = new THREE.Color(0xfbfb36);
-        mesh.material.emissiveIntensity = 0.9;
+        const isSelected = pIdx === selectedPlotIndex;
+        if (isSelected) {
+          if (mat.color) mat.color.setHex(0xffea75);
+          if ('emissive' in mat) {
+            mat.emissive = new THREE.Color(0xfbfb36);
+            mat.emissiveIntensity = 0.9;
+          }
+        } else {
+          if (mat.color && mat.userData.originalColor) {
+            mat.color.copy(mat.userData.originalColor);
+          }
+          if ('emissive' in mat) {
+            mat.emissive = new THREE.Color(0x000000);
+            mat.emissiveIntensity = 0;
+          }
+        }
+        mat.needsUpdate = true;
+      };
+
+      if (Array.isArray(mesh.material)) {
+        mesh.material.forEach(applySelectionStyle);
       } else {
-        mesh.material.color.copy(mesh.userData.originalColor);
-        mesh.material.emissive = new THREE.Color(0x000000);
-        mesh.material.emissiveIntensity = 0;
+        applySelectionStyle(mesh.material);
       }
-      mesh.material.needsUpdate = true;
     });
   }, [selectedPlotIndex]);
 
@@ -275,21 +298,19 @@ function FarmCanvas({
   }, []);
 
   const updateCrops = async () => {
-    try {
-      if (!sceneRef.current || !farmModelRef.current) return;
-      
-      if (cropsGroupRef.current) {
-        sceneRef.current.remove(cropsGroupRef.current);
-        cropsGroupRef.current = null;
-      }
+    if (isUpdatingRef.current) {
+      pendingUpdateRef.current = true;
+      return;
+    }
+    isUpdatingRef.current = true;
 
-      const group = new THREE.Group();
-      sceneRef.current.add(group);
-      cropsGroupRef.current = group;
+    try {
+      if (!sceneRef.current || !farmModelRef.current || !mountedRef.current) return;
 
       const cropsScene = await loadCropsModel();
-      if (!mountedRef.current) return;
+      if (!mountedRef.current || !sceneRef.current || !farmModelRef.current) return;
 
+      const nextGroup = new THREE.Group();
       const currentPlots = plotsDataRef.current;
 
       if (currentPlots && currentPlots.length > 0) {
@@ -309,34 +330,32 @@ function FarmCanvas({
 
             if (targetMeshName) {
               cropsScene.traverse((child) => {
-                if (child.isMesh && child.name === targetMeshName) {
-                  const cropClone = child.clone(true);
-                  
+                if (child.isMesh && child.name === targetMeshName && child.geometry) {
+                  const cropClone = child.clone(false);
                   cropClone.position.set(0, 0, 0);
                   cropClone.rotation.set(0, 0, 0);
                   cropClone.scale.set(1, 1, 1);
 
-                  if (cropClone.geometry) {
-                    cropClone.geometry = cropClone.geometry.clone();
-                    cropClone.geometry.computeBoundingBox();
-                    const box = cropClone.geometry.boundingBox;
+                  const centeredGeo = child.geometry.clone();
+                  centeredGeo.computeBoundingBox();
+                  const box = centeredGeo.boundingBox;
+                  if (box) {
                     const meshCenter = new THREE.Vector3();
                     box.getCenter(meshCenter);
-                    cropClone.geometry.translate(-meshCenter.x, -box.min.y, -meshCenter.z);
+                    centeredGeo.translate(-meshCenter.x, -box.min.y, -meshCenter.z);
                   }
+                  cropClone.geometry = centeredGeo;
 
                   const plotCenter = plotCentersRef.current[pIndex];
-                  if (plotCenter) {
+                  if (plotCenter && farmModelRef.current) {
                     const farmScale = farmModelRef.current.scale.x;
-                    
-                    // 💡 사용자님이 맞추신 정확한 `- 2.1` 오프셋 적용
                     cropClone.position.set(
                       plotCenter.x,
-                      plotCenter.y + (modelOffsetY || 0) - 2.1, 
+                      plotCenter.y + (modelOffsetY || 0) - 2.1,
                       plotCenter.z
                     );
                     cropClone.scale.multiplyScalar(farmScale * 0.85);
-                    group.add(cropClone);
+                    nextGroup.add(cropClone);
                   }
                 }
               });
@@ -344,8 +363,25 @@ function FarmCanvas({
           }
         });
       }
+
+      if (!mountedRef.current || !sceneRef.current) return;
+
+      const prevGroup = cropsGroupRef.current;
+      cropsGroupRef.current = nextGroup;
+      sceneRef.current.add(nextGroup);
+      needsRenderLogRef.current = true;
+
+      if (prevGroup) {
+        sceneRef.current.remove(prevGroup);
+      }
     } catch (err) {
-      console.error('❌ updateCrops 에러:', err);
+      console.log('❌ updateCrops 에러:', err?.message);
+    } finally {
+      isUpdatingRef.current = false;
+      if (pendingUpdateRef.current && mountedRef.current) {
+        pendingUpdateRef.current = false;
+        updateCrops();
+      }
     }
   };
 
@@ -426,23 +462,31 @@ function FarmCanvas({
 
       await updateCrops();
       if (!mountedRef.current) return;
-      isSceneReadyRef.current = true; // 💡 씬과 작물 로딩이 모두 끝난 뒤 플래그 해제
+      isSceneReadyRef.current = true;
 
       const currentSelected = selectedPlotIndexRef.current;
       if (currentSelected !== null && currentSelected !== undefined) {
         plotMeshes.forEach((mesh) => {
-          if (mesh.userData.plotIndex === currentSelected && mesh.material) {
-            if (!mesh.userData.originalColor) {
-              mesh.userData.originalColor = mesh.material.color.clone();
+          const pIdx = mesh.userData.plotIndex;
+          if (!mesh.material) return;
+          const applyInitSelection = (mat) => {
+            if (!mat) return;
+            if (!mat.userData.originalColor) {
+              mat.userData.originalColor = mat.color ? mat.color.clone() : new THREE.Color(0xffffff);
             }
-            if (!mesh.userData.clonedMaterial) {
-              mesh.userData.clonedMaterial = mesh.material.clone();
-              mesh.material = mesh.userData.clonedMaterial;
+            if (pIdx === currentSelected) {
+              if (mat.color) mat.color.setHex(0xffea75);
+              if ('emissive' in mat) {
+                mat.emissive = new THREE.Color(0xfbfb36);
+                mat.emissiveIntensity = 0.9;
+              }
             }
-            mesh.material.color.setHex(0xffea75);
-            mesh.material.emissive = new THREE.Color(0xfbfb36);
-            mesh.material.emissiveIntensity = 0.9;
-            mesh.material.needsUpdate = true;
+            mat.needsUpdate = true;
+          };
+          if (Array.isArray(mesh.material)) {
+            mesh.material.forEach(applyInitSelection);
+          } else {
+            applyInitSelection(mesh.material);
           }
         });
       }
@@ -453,51 +497,22 @@ function FarmCanvas({
           return;
         }
         animationRef.current = requestAnimationFrame(render);
-        renderer.render(scene, camera);
-        gl.endFrameEXP();
-      };
-      renderRef.current = render;
-      render();
-    } catch (error) {
-      console.error('❌ 농장 3D 모델 로딩 실패:', error);
-    }
-  };
-
-  return (
-    <View
-      style={styles.glView}
-      onLayout={(e) => { layoutRef.current = e.nativeEvent.layout; }}
-      onStartShouldSetResponder={() => !!onSelectPlot}
-      onResponderGrant={(e) => {
-        touchStartRef.current = { x: e.nativeEvent.locationX, y: e.nativeEvent.locationY, time: Date.now() };
-      }}
-      onResponderRelease={(e) => {
-        if (!onSelectPlotRef.current || !touchStartRef.current) return;
-        const { locationX, locationY } = e.nativeEvent;
-        const camera = cameraRef.current;
-        const plotMeshes = plotMeshesRef.current;
-        const { width, height } = layoutRef.current;
-        if (!camera || !width || !height) return;
-
-        const mouse = new THREE.Vector2((locationX / width) * 2 - 1, -(locationY / height) * 2 + 1);
-        const raycaster = new THREE.Raycaster();
-        raycaster.setFromCamera(mouse, camera);
-
-        if (plotMeshes.length > 0) {
-          const hits = raycaster.intersectObjects(plotMeshes, true);
-          if (hits.length > 0) {
-            const pIdx = hits[0].object.userData?.plotIndex ?? hits[0].object.parent?.userData?.plotIndex;
-            if (pIdx !== undefined) onSelectPlotRef.current(pIdx);
+        try {
+          const shouldLog = needsRenderLogRef.current;
+          if (shouldLog) {
+            needsRenderLogRef.current = false;
+            console.log('🎬 [RENDER] renderer.render 호출 전');
           }
+          renderer.render(scene, camera);
+          if (shouldLog) {
+            console.log('🎬 [RENDER] gl.endFrameEXP 호출 전');
+          }
+          gl.endFrameEXP();
+          if (shouldLog) {
+            console.log('🎬 [RENDER] 프레임 완료');
+          }
+        } catch (renderErr) {
+          console.log('❌ 렌더 프레임 에러:', renderErr?.message);
         }
-      }}
-    >
-      <GLView style={styles.glView} onContextCreate={onContextCreate} />
-    </View>
-  );
-}
-
-const styles = StyleSheet.create({
-  container: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%', backgroundColor: '#F5F1E8' },
-  glView: { width: '100%', height: '100%' },
-});
+      };
+      renderRef.
