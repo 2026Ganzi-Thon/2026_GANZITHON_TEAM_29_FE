@@ -8,7 +8,6 @@ import {
   FlatList,
   Dimensions,
 } from 'react-native';
-import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS } from '../../styles/colors';
 import { FONTS } from '../../styles/fonts';
 import { commonStyles } from '../../styles/commonStyles';
@@ -18,55 +17,16 @@ import FarmScene3D from '../../components/farm/FarmScene3D';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
-const BASE_MOCK_CROPS_DATA = [
-  {
-    crop_id: "10000000-0000-4000-8000-000000000001",
-    name: "새싹채소",
-    target_seconds: 600,
-    sort_order: 1
-  },
-  {
-    crop_id: "10000000-0000-4000-8000-000000000002",
-    name: "당근",
-    target_seconds: 1200,
-    sort_order: 2
-  },
-  {
-    crop_id: "10000000-0000-4000-8000-000000000003",
-    name: "딸기",
-    target_seconds: 1800,
-    sort_order: 3
-  },
-  {
-    crop_id: "10000000-0000-4000-8000-000000000004",
-    name: "옥수수",
-    target_seconds: 2700,
-    sort_order: 4
-  },
-  {
-    crop_id: "10000000-0000-4000-8000-000000000005",
-    name: "토마토",
-    target_seconds: 3600,
-    sort_order: 5
-  },
-  {
-    crop_id: "10000000-0000-4000-8000-000000000006",
-    name: "호박",
-    target_seconds: 5400,
-    sort_order: 6
-  }
-];
-
 export default function S05Screen({ route, navigation }) {
   const { plotIndex, energy } = route.params || {};
-  
+
   const [crops, setCrops] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedCrop, setSelectedCrop] = useState(null);
   const [plotsData, setPlotsData] = useState([]);
 
   useEffect(() => {
-    fetchCrops();
+    fetchCropsFromSupabase();
   }, [energy]);
 
   useEffect(() => {
@@ -76,15 +36,26 @@ export default function S05Screen({ route, navigation }) {
           plotIndex: plotIndex,
           cropName: selectedCrop.name,
           stage: 1,
-          farmStatus: 'growing'
-        }
+          farmStatus: 'growing',
+        },
       ]);
     }
   }, [plotIndex, selectedCrop]);
 
-  const fetchCrops = async () => {
+  const fetchCropsFromSupabase = async () => {
     try {
       setLoading(true);
+
+      const { data, error } = await supabase
+        .from('crops')
+        .select('*')
+        .order('sort_order', { ascending: true });
+
+      if (error) {
+        throw error;
+      }
+
+      const cropList = data || [];
 
       let recommendedNames = [];
       if (energy === 'low' || energy === '바닥이에요') {
@@ -95,15 +66,15 @@ export default function S05Screen({ route, navigation }) {
         recommendedNames = ['토마토', '호박'];
       }
 
-      const cropList = BASE_MOCK_CROPS_DATA.map(crop => ({
+      const formattedCrops = cropList.map((crop) => ({
         ...crop,
-        recommended: recommendedNames.includes(crop.name)
+        recommended: recommendedNames.includes(crop.name),
       }));
 
-      setCrops(cropList);
-      // 💡 첫 진입 시 자동 선택을 제거하여 아무것도 미리 선택되지 않도록 수정
+      setCrops(formattedCrops);
     } catch (error) {
-      console.error('작물 목록 조회 실패:', error.message);
+      console.error('서버에서 작물 목록 조회 실패:', error.message);
+      setCrops([]);
     } finally {
       setLoading(false);
     }
@@ -130,7 +101,8 @@ export default function S05Screen({ route, navigation }) {
     navigation.navigate('S06', {
       plotIndex,
       cropId: selectedCrop.crop_id || selectedCrop.id,
-      cropName: selectedCrop.name, // 💡 S06으로 작물 이름 전달
+      cropName: selectedCrop.name,
+      targetSeconds: selectedCrop.target_seconds || selectedCrop.targetSeconds || 600,
     });
   };
 
@@ -145,7 +117,7 @@ export default function S05Screen({ route, navigation }) {
   return (
     <View style={commonStyles.screen}>
       <View style={styles.farmBackground}>
-        <FarmScene3D 
+        <FarmScene3D
           cameraPos={[0, 8, 8]}
           cameraLookAt={[0, 0.5, 0]}
           modelOffsetY={2.5}
@@ -154,10 +126,7 @@ export default function S05Screen({ route, navigation }) {
         />
       </View>
 
-      <Pressable 
-        style={styles.backdrop} 
-        onPress={handleGoBack} 
-      />
+      <Pressable style={styles.backdrop} onPress={handleGoBack} />
 
       <View style={styles.bottomSheet}>
         <View style={styles.headerRow}>
@@ -167,9 +136,7 @@ export default function S05Screen({ route, navigation }) {
           <Text style={styles.stepText}>2 / 2</Text>
         </View>
 
-        <Text style={styles.title}>
-          {getTitleByEnergy()}
-        </Text>
+        <Text style={styles.title}>{getTitleByEnergy()}</Text>
         <Text style={styles.subtitle}>작물마다 키우는 시간이 달라요</Text>
 
         {loading ? (
@@ -180,19 +147,19 @@ export default function S05Screen({ route, navigation }) {
           <FlatList
             data={crops}
             numColumns={3}
-            keyExtractor={(item, index) => item.crop_id?.toString() || item.id?.toString() || index.toString()}
+            keyExtractor={(item, index) =>
+              item.crop_id?.toString() || item.id?.toString() || index.toString()
+            }
             contentContainerStyle={styles.gridContainer}
             columnWrapperStyle={styles.columnWrapper}
             renderItem={({ item }) => {
               const isSelected = selectedCrop?.name === item.name;
-              const minutes = Math.floor((item.target_seconds || 600) / 60);
+              const seconds = item.target_seconds || item.targetSeconds || 600;
+              const minutes = Math.floor(seconds / 60);
 
               return (
                 <Pressable
-                  style={[
-                    styles.cropCard,
-                    isSelected && styles.selectedCard,
-                  ]}
+                  style={[styles.cropCard, isSelected && styles.selectedCard]}
                   onPress={() => setSelectedCrop(item)}
                 >
                   <View style={styles.cropIconPlaceholder} />
@@ -214,7 +181,11 @@ export default function S05Screen({ route, navigation }) {
           onPress={handleStartFocus}
         >
           <Text style={styles.startButtonText}>
-            {selectedCrop ? `${selectedCrop.name} 심기 · ${Math.floor((selectedCrop.target_seconds || 600) / 60)}분` : '작물을 선택해주세요'}
+            {selectedCrop
+              ? `${selectedCrop.name} 심기 · ${Math.floor(
+                  (selectedCrop.target_seconds || selectedCrop.targetSeconds || 600) / 60
+                )}분`
+              : '작물을 선택해주세요'}
           </Text>
         </Pressable>
       </View>

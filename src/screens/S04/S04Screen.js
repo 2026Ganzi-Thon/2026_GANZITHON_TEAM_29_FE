@@ -40,7 +40,7 @@ export default function S04Screen({ route, navigation }) {
           cameraPos={[0, 8, 8]}
           cameraLookAt={[0, 0.5, 0]}
           modelOffsetY={2.5}
-          selectedPlotIndex={plotIndex ? plotIndex : null} 
+          selectedPlotIndex={plotIndex !== undefined && plotIndex !== null ? plotIndex : null} 
         />
       </View>
 

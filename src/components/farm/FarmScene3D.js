@@ -32,26 +32,10 @@ async function readLocalFile(uri) {
   return await file.arrayBuffer();
 }
 
-// 농장 모델은 앱 전체에서 한 번만 불러오고, 화면마다 clone해서 씀
-let farmModelPromise = null;
-
-async function parseFarmModel() {
-  const modelAsset = Asset.fromModule(require('../../../assets/models/farms/farm_1.glb'));
-  await modelAsset.downloadAsync();
-
-  if (!modelAsset.localUri) {
-    throw new Error('GLB 파일 경로를 찾을 수 없습니다.');
-  }
-
-  const arrayBuffer = await readLocalFile(modelAsset.localUri);
-
-  if (!arrayBuffer || arrayBuffer.byteLength === 0) {
-    throw new Error('GLB 파일을 읽을 수 없습니다.');
-  }
-
+function createSafeGLTFLoader(prefix) {
   const textureLoader = new TextureLoader();
   const loader = new GLTFLoader();
-  
+
   loader.register((parser) => {
     const textureCache = new Map();
     parser.loadImageSource = async (sourceIndex) => {
@@ -60,25 +44,28 @@ async function parseFarmModel() {
       }
       const texturePromise = (async () => {
         const imageSource = parser.json.images[sourceIndex];
-        if (!imageSource) throw new Error();
-        if (imageSource.bufferView !== undefined) {
-          const imageBuffer = await parser.getDependency('bufferView', imageSource.bufferView);
-          const base64Data = encode(imageBuffer);
-          const mimeType = imageSource.mimeType || 'image/png';
-          const extension = mimeType.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
-
-          const textureUri = `${FileSystem.cacheDirectory}texture_${sourceIndex}_${Date.now()}.${extension}`;
-          await FileSystem.writeAsStringAsync(textureUri, base64Data, {
-            encoding: FileSystem.EncodingType.Base64,
-          });
-
-          const texture = await new Promise((resolve, reject) => {
-            textureLoader.load(textureUri, resolve, undefined, reject);
-          });
-          texture.flipY = false;
-          texture.encoding = THREE.sRGBEncoding;
-          return texture;
+        if (!imageSource) throw new Error(`텍스처 이미지 ${sourceIndex}를 찾을 수 없습니다.`);
+        if (imageSource.bufferView === undefined) {
+          throw new Error(`지원하지 않는 텍스처 형식입니다: ${sourceIndex}`);
         }
+
+        const imageBuffer = await parser.getDependency('bufferView', imageSource.bufferView);
+        const base64Data = encode(imageBuffer);
+        const mimeType = imageSource.mimeType || 'image/png';
+        const extension = mimeType.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
+
+        // Date.now()를 제거하여 캐시 폴더에 중복 파일이 쌓이지 않도록 고정 파일명 사용
+        const textureUri = `${FileSystem.cacheDirectory}${prefix}_texture_${sourceIndex}.${extension}`;
+        await FileSystem.writeAsStringAsync(textureUri, base64Data, {
+          encoding: FileSystem.EncodingType.Base64,
+        });
+
+        const texture = await new Promise((resolve, reject) => {
+          textureLoader.load(textureUri, resolve, undefined, reject);
+        });
+        texture.flipY = false;
+        texture.encoding = THREE.sRGBEncoding;
+        return texture;
       })();
       textureCache.set(sourceIndex, texturePromise);
       return texturePromise;
@@ -86,6 +73,26 @@ async function parseFarmModel() {
     return { name: 'RNTextureLoader' };
   });
 
+  return loader;
+}
+
+// 1. 농장 모델 전역 캐싱
+let farmModelPromise = null;
+
+async function parseFarmModel() {
+  const modelAsset = Asset.fromModule(require('../../../assets/models/farms/farm_1.glb'));
+  await modelAsset.downloadAsync();
+
+  if (!modelAsset.localUri) {
+    throw new Error('농장 GLB 파일 경로를 찾을 수 없습니다.');
+  }
+
+  const arrayBuffer = await readLocalFile(modelAsset.localUri);
+  if (!arrayBuffer || arrayBuffer.byteLength === 0) {
+    throw new Error('농장 GLB 파일을 읽을 수 없습니다.');
+  }
+
+  const loader = createSafeGLTFLoader('farm');
   const gltf = await new Promise((resolve, reject) => {
     loader.parse(arrayBuffer, '', resolve, reject);
   });
@@ -132,6 +139,52 @@ function loadFarmModel() {
     });
   }
   return farmModelPromise;
+}
+
+// 2. 작물 모델 전역 캐싱 (한 번만 파싱하고 화면마다 clone해서 사용)
+let cropsModelPromise = null;
+
+async function parseCropsModel() {
+  const cropAsset = Asset.fromModule(require('../../../assets/models/farms/crops.glb'));
+  await cropAsset.downloadAsync();
+
+  if (!cropAsset.localUri) {
+    throw new Error('작물 GLB 파일 경로를 찾을 수 없습니다.');
+  }
+
+  const cropBuffer = await readLocalFile(cropAsset.localUri);
+  if (!cropBuffer || cropBuffer.byteLength === 0) {
+    throw new Error('작물 GLB 파일을 읽을 수 없습니다.');
+  }
+
+  const cropLoader = createSafeGLTFLoader('crop');
+  const cropGltf = await new Promise((resolve, reject) => {
+    cropLoader.parse(cropBuffer, '', resolve, reject);
+  });
+
+  const cropsScene = cropGltf.scene;
+  cropsScene.traverse((child) => {
+    if (child.isMesh && child.material) {
+      if (child.material.map) {
+        child.material.map.encoding = THREE.sRGBEncoding;
+        child.material.map.flipY = false;
+      }
+      child.material.needsUpdate = true;
+    }
+  });
+
+  console.log('작물 3D 모델 및 텍스처 로딩 성공');
+  return cropsScene;
+}
+
+function loadCropsModel() {
+  if (!cropsModelPromise) {
+    cropsModelPromise = parseCropsModel().catch((error) => {
+      cropsModelPromise = null;
+      throw error;
+    });
+  }
+  return cropsModelPromise;
 }
 
 export default function FarmScene3D({
@@ -190,7 +243,7 @@ function FarmCanvas({
   const plotCentersRef = useRef([]);
   const layoutRef = useRef({ width: 0, height: 0 });
   const touchStartRef = useRef(null);
-  
+
   const selectedPlotIndexRef = useRef(selectedPlotIndex);
   const onSelectPlotRef = useRef(onSelectPlot);
   const plotsDataRef = useRef(plotsData);
@@ -214,7 +267,6 @@ function FarmCanvas({
     }
   }, [active]);
 
-  // 밭 하이라이트 상태 업데이트 (0~11 인덱스 매칭)
   useEffect(() => {
     plotMeshesRef.current.forEach((mesh) => {
       const pIdx = mesh.userData.plotIndex;
@@ -228,7 +280,7 @@ function FarmCanvas({
         mesh.material = mesh.userData.clonedMaterial;
       }
 
-      const isSelected = (pIdx === selectedPlotIndex);
+      const isSelected = pIdx === selectedPlotIndex;
 
       if (isSelected) {
         mesh.material.color.setHex(0xffea75);
@@ -301,7 +353,7 @@ function FarmCanvas({
       directionalLight.position.set(5, 10, 7);
       scene.add(directionalLight);
 
-      // 1. 농장 모델 추가
+      // 1. 캐싱된 농장 모델 복제 후 배치
       const baseFarmModel = await loadFarmModel();
       if (!mountedRef.current) return;
 
@@ -340,98 +392,41 @@ function FarmCanvas({
       plotMeshesRef.current = plotMeshes;
       plotCentersRef.current = plotCenters;
 
-      // 2. 작물 모델(crops.glb) 로드 및 배치
+      // 2. 캐싱된 작물 모델(crops.glb) 불러와서 필요한 작물만 복제(clone) 배치
       try {
-        const cropAsset = Asset.fromModule(require('../../../assets/models/farms/crops.glb'));
-        await cropAsset.downloadAsync();
-        
-        if (mountedRef.current && cropAsset.localUri) {
-          const cropBuffer = await readLocalFile(cropAsset.localUri);
-          const textureLoader = new TextureLoader();
-          const cropLoader = new GLTFLoader();
-          
-          cropLoader.register((parser) => {
-            const textureCache = new Map();
-            parser.loadImageSource = async (sourceIndex) => {
-              if (textureCache.has(sourceIndex)) {
-                return textureCache.get(sourceIndex).then((t) => t.clone());
+        const cropsScene = await loadCropsModel();
+        if (!mountedRef.current) return;
+
+        if (plotsDataRef.current && plotsDataRef.current.length > 0) {
+          plotsDataRef.current.forEach((plot) => {
+            const pIndex = plot.plotIndex !== undefined ? plot.plotIndex : plot.id;
+            const { cropName, stage = 1, farmStatus } = plot;
+
+            if (farmStatus !== 'empty' && cropName) {
+              const targetKey = `${cropName}_${stage}`;
+              const targetMeshName = CROP_MESH_MAP[targetKey];
+
+              if (targetMeshName) {
+                cropsScene.traverse((child) => {
+                  if (child.isMesh && child.name === targetMeshName) {
+                    const cropClone = child.clone(true);
+                    const plotCenter = plotCenters[pIndex];
+
+                    if (plotCenter) {
+                      const farmScale = farmModel.scale.x;
+                      cropClone.position.set(
+                        plotCenter.x,
+                        plotCenter.y + (modelOffsetY || 0),
+                        plotCenter.z
+                      );
+                      cropClone.scale.multiplyScalar(farmScale);
+                      scene.add(cropClone);
+                    }
+                  }
+                });
               }
-              const texturePromise = (async () => {
-                const imageSource = parser.json.images[sourceIndex];
-                if (!imageSource) throw new Error();
-                if (imageSource.bufferView !== undefined) {
-                  const imageBuffer = await parser.getDependency('bufferView', imageSource.bufferView);
-                  const base64Data = encode(imageBuffer);
-                  const mimeType = imageSource.mimeType || 'image/png';
-                  const extension = mimeType.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
-
-                  const textureUri = `${FileSystem.cacheDirectory}crop_texture_${sourceIndex}_${Date.now()}.${extension}`;
-                  await FileSystem.writeAsStringAsync(textureUri, base64Data, {
-                    encoding: FileSystem.EncodingType.Base64,
-                  });
-
-                  if (!mountedRef.current) throw new Error();
-
-                  const texture = await new Promise((resolve, reject) => {
-                    textureLoader.load(textureUri, resolve, undefined, reject);
-                  });
-                  texture.flipY = false;
-                  texture.encoding = THREE.sRGBEncoding;
-                  return texture;
-                }
-              })();
-              textureCache.set(sourceIndex, texturePromise);
-              return texturePromise;
-            };
-            return { name: 'RNTextureLoader' };
-          });
-
-          const cropGltf = await new Promise((resolve, reject) => {
-            cropLoader.parse(cropBuffer, '', resolve, reject);
-          });
-
-          const cropsScene = cropGltf.scene;
-          cropsScene.traverse((child) => {
-            if (child.isMesh && child.material) {
-              if (child.material.map) {
-                child.material.map.encoding = THREE.sRGBEncoding;
-                child.material.map.flipY = false;
-              }
-              child.material.needsUpdate = true;
             }
           });
-
-          if (plotsDataRef.current && plotsDataRef.current.length > 0) {
-            plotsDataRef.current.forEach((plot) => {
-              const pIndex = plot.plotIndex !== undefined ? plot.plotIndex : plot.id;
-              const { cropName, stage = 1, farmStatus } = plot;
-              
-              if (farmStatus !== 'empty' && cropName) {
-                const targetKey = `${cropName}_${stage}`;
-                const targetMeshName = CROP_MESH_MAP[targetKey];
-
-                if (targetMeshName) {
-                  cropsScene.traverse((child) => {
-                    if (child.isMesh && child.name === targetMeshName) {
-                      const cropClone = child.clone(true);
-                      const plotCenter = plotCenters[pIndex];
-
-                      if (plotCenter) {
-                        const farmScale = farmModel.scale.x;
-                        cropClone.position.set(
-                          plotCenter.x,
-                          plotCenter.y + (modelOffsetY || 0),
-                          plotCenter.z
-                        );
-                        cropClone.scale.multiplyScalar(farmScale);
-                        scene.add(cropClone);
-                      }
-                    }
-                  });
-                }
-              }
-            });
-          }
         }
       } catch (cropErr) {
         console.log('작물 모델(crops.glb) 로드 실패:', cropErr?.message);

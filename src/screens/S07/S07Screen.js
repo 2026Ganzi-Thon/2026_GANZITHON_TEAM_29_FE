@@ -15,12 +15,12 @@ import { supabase } from '../../utils/supabase';
 import FarmScene3D from '../../components/farm/FarmScene3D';
 
 export default function S07Screen({ route, navigation }) {
-  const { sessionId, plotIndex } = route.params || {};
+  const { sessionId, plotIndex = 0 } = route.params || {};
 
   const [loading, setLoading] = useState(false);
   const [remainingSeconds, setRemainingSeconds] = useState(route.params?.remainingSeconds || 0);
   const [plotsData, setPlotsData] = useState([]);
-  const [currentCropName, setCurrentCropName] = useState('작물'); // 선택한 작물 이름 상태
+  const [currentCropName, setCurrentCropName] = useState('작물');
 
   useEffect(() => {
     fetchFarmState();
@@ -30,20 +30,22 @@ export default function S07Screen({ route, navigation }) {
     try {
       const { data: farmData } = await supabase.rpc('get_my_farm');
       
+      // 💡 0 ~ 11 인덱스로 일치시켜 튕김 현상 방지
       const formattedPlots = Array.from({ length: 12 }, (_, index) => {
-        const idx = index + 1;
-        const serverPlot = farmData?.find(item => item.plot_index === idx);
+        const serverPlot = farmData?.find(item => item.plot_index === index);
         return {
-          id: idx,
+          id: index,
+          plotIndex: index,
           plotId: serverPlot?.plot_id || null,
-          farmStatus: serverPlot?.plot_index === plotIndex ? 'paused' : (serverPlot?.farm_status || 'empty'),
-          cropName: serverPlot?.crop_name || '작물',
+          farmStatus: index === plotIndex ? 'paused' : (serverPlot?.farm_status || 'empty'),
+          cropName: serverPlot?.crop_name || null,
+          stage: serverPlot?.stage || 1,
         };
       });
 
       setPlotsData(formattedPlots);
 
-      if (plotIndex) {
+      if (plotIndex !== undefined) {
         const targetPlot = farmData?.find(item => item.plot_index === plotIndex);
         if (targetPlot && targetPlot.crop_name) {
           setCurrentCropName(targetPlot.crop_name);
@@ -54,13 +56,11 @@ export default function S07Screen({ route, navigation }) {
     }
   };
 
-
   const formatTime = (secs) => {
     const minutes = Math.floor(secs / 60);
     const seconds = secs % 60;
     return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   };
-
 
   const handleResumeFocus = async () => {
     if (!sessionId) {
@@ -70,7 +70,7 @@ export default function S07Screen({ route, navigation }) {
 
     try {
       setLoading(true);
-      const { data, error } = await supabase.rpc('resume_focus', {
+      const { error } = await supabase.rpc('resume_focus', {
         p_session_id: sessionId,
       });
 
@@ -83,7 +83,6 @@ export default function S07Screen({ route, navigation }) {
       setLoading(false);
     }
   };
-
 
   const handleStopPreview = async () => {
     if (!sessionId) return;
@@ -111,7 +110,7 @@ export default function S07Screen({ route, navigation }) {
           cameraPos={[0, 5.0, 5.8]} 
           modelOffsetY={0.4} 
           plotsData={plotsData}
-          selectedPlotIndex={plotIndex ? plotIndex - 1 : null}
+          selectedPlotIndex={plotIndex}
         />
         <View style={styles.pausedOverlay} />
       </View>

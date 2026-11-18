@@ -16,7 +16,6 @@ import { iGa } from '../../utils/josa';
 import FarmScene3D from '../../components/farm/FarmScene3D';
 
 export default function S06Screen({ route, navigation }) {
-  // 💡 S05에서 넘어온 targetSeconds 또는 cropId에 따른 기본 시간 확보
   const { plotIndex = 0, cropId, cropName = '당근', targetSeconds: routeTargetSeconds } = route.params || {};
 
   const [loading, setLoading] = useState(true);
@@ -27,74 +26,65 @@ export default function S06Screen({ route, navigation }) {
   const [currentCropName, setCurrentCropName] = useState(cropName);
 
   const timerRef = useRef(null);
+  const isMountedRef = useRef(true);
+  const hasCheckedOverworkRef = useRef(false); // 90분 초과 API 중복 호출 방지용 플래그
 
   useEffect(() => {
+    isMountedRef.current = true;
+    hasCheckedOverworkRef.current = false;
     initFocusSession();
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      isMountedRef.current = false;
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
     };
   }, []);
 
   const initFocusSession = async () => {
     try {
-      setLoading(true);
+      if (isMountedRef.current) setLoading(true);
 
       let currentSession = null;
-      let activeError = null;
 
       try {
-        const res = await supabase.rpc('get_active_focus');
-        activeError = res.error;
-        if (!activeError && res.data && res.data.session) {
-          currentSession = res.data.session;
+        const { data, error } = await supabase.rpc('get_active_focus');
+        if (!error && data && data.session) {
+          currentSession = data.session;
         }
       } catch (err) {
-        activeError = err;
+        console.log('활성 세션 조회 실패:', err?.message);
       }
 
-      // 만약 활성 세션이 없으면 새로 start_focus 호출
       if (!currentSession) {
         let targetPlotId = null;
         try {
           const { data: farmDataForStart } = await supabase.rpc('get_my_farm');
-          const targetPlot = farmDataForStart?.find(p => p.plot_index === plotIndex || p.id === plotIndex);
+          const targetPlot = farmDataForStart?.find(p => p.plot_index === plotIndex);
           targetPlotId = targetPlot?.plot_id;
         } catch (e) {
-          // 무시
+          console.log('농장 정보 조회 실패:', e?.message);
         }
 
-        const validCropId = cropId || "10000000-0000-4000-8000-000000000002";
-        const validPlotId = targetPlotId || "10d934b1-b15f-4144-8bc2-cd09eb22e251";
-
-        try {
+        if (targetPlotId && cropId) {
           const { data: startData, error: startError } = await supabase.rpc('start_focus', {
-            p_plot_id: validPlotId,
-            p_crop_id: validCropId,
+            p_plot_id: targetPlotId,
+            p_crop_id: cropId,
           });
 
           if (!startError && startData) {
             currentSession = startData;
           }
-        } catch (e) {
-          // API 연동 전/실패 시 Mock 방어
-        }
-
-        if (!currentSession) {
-          // 💡 S05에서 전달받은 routeTargetSeconds가 있다면 우선 반영, 없으면 기본 600초
-          const defaultTarget = routeTargetSeconds || 600;
-          currentSession = {
-            session_id: "mock_session_id_123",
-            target_seconds: defaultTarget,
-            remaining_seconds: defaultTarget,
-          };
         }
       }
+
+      if (!isMountedRef.current) return;
 
       if (currentSession) {
         setSession(currentSession);
         
-        // 💡 서버 세션에 기록된 target_seconds 또는 라우트로 전달받은 시간 반영
         const tSec = currentSession.target_seconds || routeTargetSeconds || 600;
         setTargetSeconds(tSec);
 
@@ -103,9 +93,14 @@ export default function S06Screen({ route, navigation }) {
           : tSec;
         setRemainingSeconds(rSec);
 
-        // 서버 세션에 저장된 작물 이름이 있다면 업데이트
         if (currentSession.crop_name) {
           setCurrentCropName(currentSession.crop_name);
+        }
+
+        // 화면 진입 시 이미 90분(5400초)을 초과한 상태라면 즉시 체크
+        const initialElapsed = tSec - rSec;
+        if (initialElapsed > 5400 && currentSession.session_id) {
+          checkOverworkNotice(currentSession.session_id);
         }
       }
 
@@ -114,8 +109,10 @@ export default function S06Screen({ route, navigation }) {
         const { data: fData } = await supabase.rpc('get_my_farm');
         farmData = fData || [];
       } catch (e) {
-        // 무시
+        console.log('농장 상태 동기화 실패:', e?.message);
       }
+
+      if (!isMountedRef.current) return;
 
       const currentProgress = calculateProgressForData(currentSession?.remaining_seconds, currentSession?.target_seconds || routeTargetSeconds || 600);
       let calculatedStage = 1;
@@ -127,7 +124,7 @@ export default function S06Screen({ route, navigation }) {
 
       const formattedPlots = Array.from({ length: 12 }, (_, index) => {
         const isCurrentFocusPlot = index === plotIndex;
-        const serverPlot = farmData?.find(item => item.plot_index === index || item.id === index);
+        const serverPlot = farmData?.find(item => item.plot_index === index);
 
         return {
           id: index,
@@ -145,24 +142,56 @@ export default function S06Screen({ route, navigation }) {
     } catch (error) {
       console.error('집중 세션 초기화 실패:', error.message);
     } finally {
-      setLoading(false);
+      if (isMountedRef.current) setLoading(false);
+    }
+  };
+
+  // 💡 연속 집중 90분 초과 시 S12 표시 권한 획득 RPC 호출
+  const checkOverworkNotice = async (targetSessionId) => {
+    if (!targetSessionId || hasCheckedOverworkRef.current) return;
+    hasCheckedOverworkRef.current = true;
+
+    try {
+      const { data, error } = await supabase.rpc('claim_overwork_notice', {
+        p_session_id: targetSessionId,
+      });
+
+      if (error) {
+        console.log('claim_overwork_notice 호출 실패:', error.message);
+        return;
+      }
+
+      if (data?.show_overwork_notice === true && isMountedRef.current) {
+        navigation.navigate('S12', {
+          sessionId: targetSessionId,
+          plotIndex,
+          cropName: currentCropName,
+        });
+      }
+    } catch (err) {
+      console.log('claim_overwork_notice 예외:', err?.message);
     }
   };
 
   const handleCompleteFocus = async () => {
-    if (timerRef.current) clearInterval(timerRef.current);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
     try {
-      if (session?.session_id && !session.session_id.startsWith('mock')) {
+      if (session?.session_id) {
         await supabase.rpc('complete_focus', { p_session_id: session.session_id }).catch(() => {});
       }
     } catch (e) {
       console.log('complete_focus 호출 알림:', e?.message);
     }
-    navigation.replace('S10', {
-      cropName: currentCropName,
-      minutes: Math.round(targetSeconds / 60) || 10,
-      plotIndex,
-    });
+    if (isMountedRef.current) {
+      navigation.replace('S10', {
+        cropName: currentCropName,
+        minutes: Math.round(targetSeconds / 60) || 10,
+        plotIndex,
+      });
+    }
   };
 
   const calculateProgress = () => {
@@ -183,15 +212,26 @@ export default function S06Screen({ route, navigation }) {
     if (!session || remainingSeconds <= 0) return;
 
     timerRef.current = setInterval(() => {
+      if (!isMountedRef.current) return;
+
       setRemainingSeconds(prev => {
         if (prev <= 1) {
-          if (timerRef.current) clearInterval(timerRef.current);
+          if (timerRef.current) {
+            clearInterval(timerRef.current);
+            timerRef.current = null;
+          }
           handleCompleteFocus();
           return 0;
         }
         const nextSec = prev - 1;
+        const elapsedSec = targetSeconds - nextSec;
+
+        // 💡 연속 집중 시간이 90분(5,400초)을 초과하면 권한 획득 요청
+        if (elapsedSec > 5400 && session?.session_id && !hasCheckedOverworkRef.current) {
+          checkOverworkNotice(session.session_id);
+        }
         
-        const updatedProgress = Math.min(Math.max(Math.floor(((targetSeconds - nextSec) / targetSeconds) * 100), 0), 100);
+        const updatedProgress = Math.min(Math.max(Math.floor((elapsedSec / targetSeconds) * 100), 0), 100);
         let newStage = 1;
         if (updatedProgress >= 100) newStage = 5;
         else if (updatedProgress >= 80) newStage = 4;
@@ -208,7 +248,10 @@ export default function S06Screen({ route, navigation }) {
     }, 1000);
 
     return () => {
-      if (timerRef.current) clearInterval(timerRef.current);
+      if (timerRef.current) {
+        clearInterval(timerRef.current);
+        timerRef.current = null;
+      }
     };
   }, [session, targetSeconds, plotIndex]);
 
@@ -220,22 +263,25 @@ export default function S06Screen({ route, navigation }) {
 
   const handlePauseFocus = async () => {
     if (!session?.session_id) return;
-    if (timerRef.current) clearInterval(timerRef.current);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
     try {
       let pausedRemaining = remainingSeconds;
-      if (!session.session_id.startsWith('mock')) {
-        const { data, error } = await supabase.rpc('pause_focus', {
-          p_session_id: session.session_id,
-        });
-        if (error) throw error;
-        pausedRemaining = data?.remaining_seconds !== undefined ? data.remaining_seconds : remainingSeconds;
-      }
-
-      navigation.navigate('S07', { 
-        sessionId: session.session_id, 
-        remainingSeconds: pausedRemaining, 
-        plotIndex 
+      const { data, error } = await supabase.rpc('pause_focus', {
+        p_session_id: session.session_id,
       });
+      if (error) throw error;
+      pausedRemaining = data?.remaining_seconds !== undefined ? data.remaining_seconds : remainingSeconds;
+
+      if (isMountedRef.current) {
+        navigation.navigate('S07', { 
+          sessionId: session.session_id, 
+          remainingSeconds: pausedRemaining, 
+          plotIndex 
+        });
+      }
     } catch (error) {
       console.error('일시정지 실패:', error.message);
     }
@@ -243,18 +289,19 @@ export default function S06Screen({ route, navigation }) {
 
   const handleStopPreview = async () => {
     if (!session?.session_id) return;
-    if (timerRef.current) clearInterval(timerRef.current);
+    if (timerRef.current) {
+      clearInterval(timerRef.current);
+      timerRef.current = null;
+    }
     try {
-      let previewData = { focusSeconds: targetSeconds - remainingSeconds, focusMinutes: Math.floor((targetSeconds - remainingSeconds)/60), progress: calculateProgress(), result: 'SEED' };
-      if (!session.session_id.startsWith('mock')) {
-        const { data, error } = await supabase.rpc('preview_stop_focus', {
-          p_session_id: session.session_id,
-        });
-        if (error) throw error;
-        previewData = data;
-      }
+      const { data, error } = await supabase.rpc('preview_stop_focus', {
+        p_session_id: session.session_id,
+      });
+      if (error) throw error;
 
-      navigation.navigate('S09', { previewData, sessionId: session.session_id, plotIndex });
+      if (isMountedRef.current) {
+        navigation.navigate('S09', { previewData: data, sessionId: session.session_id, plotIndex });
+      }
     } catch (error) {
       console.error('중도 종료 미리보기 실패:', error.message);
     }
