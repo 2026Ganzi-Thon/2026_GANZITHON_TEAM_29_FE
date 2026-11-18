@@ -27,7 +27,7 @@ export default function S06Screen({ route, navigation }) {
 
   const timerRef = useRef(null);
   const isMountedRef = useRef(true);
-  const hasCheckedOverworkRef = useRef(false); // 90분 초과 API 중복 호출 방지용 플래그
+  const hasCheckedOverworkRef = useRef(false);
 
   useEffect(() => {
     isMountedRef.current = true;
@@ -69,15 +69,28 @@ export default function S06Screen({ route, navigation }) {
         }
 
         if (targetPlotId && cropId) {
-          const { data: startData, error: startError } = await supabase.rpc('start_focus', {
-            p_plot_id: targetPlotId,
-            p_crop_id: cropId,
-          });
+          try {
+            const { data: startData, error: startError } = await supabase.rpc('start_focus', {
+              p_plot_id: targetPlotId,
+              p_crop_id: cropId,
+            });
 
-          if (!startError && startData) {
-            currentSession = startData;
+            if (!startError && startData) {
+              currentSession = startData;
+            }
+          } catch (e) {
+            console.log('start_focus 예외:', e?.message);
           }
         }
+      }
+
+      if (!currentSession) {
+        const defaultTarget = routeTargetSeconds || 600;
+        currentSession = {
+          session_id: `local_session_${Date.now()}`,
+          target_seconds: defaultTarget,
+          remaining_seconds: defaultTarget,
+        };
       }
 
       if (!isMountedRef.current) return;
@@ -96,12 +109,6 @@ export default function S06Screen({ route, navigation }) {
         if (currentSession.crop_name) {
           setCurrentCropName(currentSession.crop_name);
         }
-
-        // 화면 진입 시 이미 90분(5400초)을 초과한 상태라면 즉시 체크
-        const initialElapsed = tSec - rSec;
-        if (initialElapsed > 5400 && currentSession.session_id) {
-          checkOverworkNotice(currentSession.session_id);
-        }
       }
 
       let farmData = [];
@@ -115,10 +122,11 @@ export default function S06Screen({ route, navigation }) {
       if (!isMountedRef.current) return;
 
       const currentProgress = calculateProgressForData(currentSession?.remaining_seconds, currentSession?.target_seconds || routeTargetSeconds || 600);
+      
       let calculatedStage = 1;
-      if (currentProgress >= 100) calculatedStage = 5;
-      else if (currentProgress >= 80) calculatedStage = 4;
-      else if (currentProgress >= 50) calculatedStage = 3;
+      if (currentProgress >= 80) calculatedStage = 5;
+      else if (currentProgress >= 60) calculatedStage = 4;
+      else if (currentProgress >= 40) calculatedStage = 3;
       else if (currentProgress >= 20) calculatedStage = 2;
       else calculatedStage = 1;
 
@@ -146,9 +154,8 @@ export default function S06Screen({ route, navigation }) {
     }
   };
 
-  // 💡 연속 집중 90분 초과 시 S12 표시 권한 획득 RPC 호출
   const checkOverworkNotice = async (targetSessionId) => {
-    if (!targetSessionId || hasCheckedOverworkRef.current) return;
+    if (!targetSessionId || hasCheckedOverworkRef.current || targetSessionId.startsWith('local_')) return;
     hasCheckedOverworkRef.current = true;
 
     try {
@@ -156,10 +163,7 @@ export default function S06Screen({ route, navigation }) {
         p_session_id: targetSessionId,
       });
 
-      if (error) {
-        console.log('claim_overwork_notice 호출 실패:', error.message);
-        return;
-      }
+      if (error) return;
 
       if (data?.show_overwork_notice === true && isMountedRef.current) {
         navigation.navigate('S12', {
@@ -169,7 +173,7 @@ export default function S06Screen({ route, navigation }) {
         });
       }
     } catch (err) {
-      console.log('claim_overwork_notice 예외:', err?.message);
+      // 무시
     }
   };
 
@@ -179,11 +183,11 @@ export default function S06Screen({ route, navigation }) {
       timerRef.current = null;
     }
     try {
-      if (session?.session_id) {
+      if (session?.session_id && !session.session_id.startsWith('local_')) {
         await supabase.rpc('complete_focus', { p_session_id: session.session_id }).catch(() => {});
       }
     } catch (e) {
-      console.log('complete_focus 호출 알림:', e?.message);
+      // 무시
     }
     if (isMountedRef.current) {
       navigation.replace('S10', {
@@ -208,14 +212,15 @@ export default function S06Screen({ route, navigation }) {
     return Math.min(Math.max(progress, 0), 100);
   };
 
+  // ⚡ 10배속 타이머 루프 (1초마다 10초씩 남은 시간을 줄여줌)
   useEffect(() => {
-    if (!session || remainingSeconds <= 0) return;
+    if (!session) return;
 
     timerRef.current = setInterval(() => {
       if (!isMountedRef.current) return;
 
       setRemainingSeconds(prev => {
-        if (prev <= 1) {
+        if (prev <= 10) {
           if (timerRef.current) {
             clearInterval(timerRef.current);
             timerRef.current = null;
@@ -223,19 +228,19 @@ export default function S06Screen({ route, navigation }) {
           handleCompleteFocus();
           return 0;
         }
-        const nextSec = prev - 1;
+        const nextSec = prev - 10; // ⚡ 10배속 적용
         const elapsedSec = targetSeconds - nextSec;
 
-        // 💡 연속 집중 시간이 90분(5,400초)을 초과하면 권한 획득 요청
         if (elapsedSec > 5400 && session?.session_id && !hasCheckedOverworkRef.current) {
           checkOverworkNotice(session.session_id);
         }
         
         const updatedProgress = Math.min(Math.max(Math.floor((elapsedSec / targetSeconds) * 100), 0), 100);
+        
         let newStage = 1;
-        if (updatedProgress >= 100) newStage = 5;
-        else if (updatedProgress >= 80) newStage = 4;
-        else if (updatedProgress >= 50) newStage = 3;
+        if (updatedProgress >= 80) newStage = 5;
+        else if (updatedProgress >= 60) newStage = 4;
+        else if (updatedProgress >= 40) newStage = 3;
         else if (updatedProgress >= 20) newStage = 2;
         else newStage = 1;
 
@@ -262,48 +267,60 @@ export default function S06Screen({ route, navigation }) {
   };
 
   const handlePauseFocus = async () => {
-    if (!session?.session_id) return;
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    try {
-      let pausedRemaining = remainingSeconds;
-      const { data, error } = await supabase.rpc('pause_focus', {
-        p_session_id: session.session_id,
-      });
-      if (error) throw error;
-      pausedRemaining = data?.remaining_seconds !== undefined ? data.remaining_seconds : remainingSeconds;
 
-      if (isMountedRef.current) {
-        navigation.navigate('S07', { 
-          sessionId: session.session_id, 
-          remainingSeconds: pausedRemaining, 
-          plotIndex 
+    let pausedRemaining = remainingSeconds;
+    try {
+      if (session?.session_id && !session.session_id.startsWith('local_')) {
+        const { data } = await supabase.rpc('pause_focus', {
+          p_session_id: session.session_id,
         });
+        if (data?.remaining_seconds !== undefined) {
+          pausedRemaining = data.remaining_seconds;
+        }
       }
     } catch (error) {
-      console.error('일시정지 실패:', error.message);
+      console.log('일시정지 API 호출 실패(로컬 처리):', error.message);
+    }
+
+    if (isMountedRef.current) {
+      navigation.navigate('S07', { 
+        sessionId: session?.session_id || 'local_session', 
+        remainingSeconds: pausedRemaining, 
+        plotIndex 
+      });
     }
   };
 
   const handleStopPreview = async () => {
-    if (!session?.session_id) return;
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    try {
-      const { data, error } = await supabase.rpc('preview_stop_focus', {
-        p_session_id: session.session_id,
-      });
-      if (error) throw error;
 
-      if (isMountedRef.current) {
-        navigation.navigate('S09', { previewData: data, sessionId: session.session_id, plotIndex });
+    let previewData = { 
+      focusSeconds: targetSeconds - remainingSeconds, 
+      focusMinutes: Math.floor((targetSeconds - remainingSeconds) / 60), 
+      progress: calculateProgress(), 
+      result: 'SEED' 
+    };
+
+    try {
+      if (session?.session_id && !session.session_id.startsWith('local_')) {
+        const { data } = await supabase.rpc('preview_stop_focus', {
+          p_session_id: session.session_id,
+        });
+        if (data) previewData = data;
       }
     } catch (error) {
-      console.error('중도 종료 미리보기 실패:', error.message);
+      console.log('중도 종료 미리보기 API 실패(로컬 처리):', error.message);
+    }
+
+    if (isMountedRef.current) {
+      navigation.navigate('S09', { previewData, sessionId: session?.session_id || 'local_session', plotIndex });
     }
   };
 
@@ -318,9 +335,9 @@ export default function S06Screen({ route, navigation }) {
   const progress = calculateProgress();
 
   let currentStageIndex = 0;
-  if (progress >= 100) currentStageIndex = 4;
-  else if (progress >= 80) currentStageIndex = 3;
-  else if (progress >= 50) currentStageIndex = 2;
+  if (progress >= 80) currentStageIndex = 4;
+  else if (progress >= 60) currentStageIndex = 3;
+  else if (progress >= 40) currentStageIndex = 2;
   else if (progress >= 20) currentStageIndex = 1;
   else currentStageIndex = 0;
 
@@ -336,8 +353,8 @@ export default function S06Screen({ route, navigation }) {
     <View style={commonStyles.screen}>
       <View style={styles.farmBackground}>
         <FarmScene3D 
-          cameraPos={[0, 5.0, 5.8]} 
-          modelOffsetY={0.4} 
+          cameraPos={[0, 10, 10]} 
+          modelOffsetY={1.8} 
           plotsData={plotsData}
           selectedPlotIndex={plotIndex !== undefined ? plotIndex : null}
         />
@@ -347,7 +364,7 @@ export default function S06Screen({ route, navigation }) {
         <View style={styles.topSpacer} />
 
         <View style={styles.bottomSheet}>
-          <Text style={styles.title}>{currentCropName} 키우는 중</Text>
+          <Text style={styles.title}>{currentCropName} 키우는 중 (10배속 테스트)</Text>
           <Text style={styles.subtitle}>휴대폰을 세워두고 작물이 자라는 걸 지켜봐 주세요</Text>
 
           <View style={styles.stageContainer}>
@@ -444,7 +461,7 @@ const styles = StyleSheet.create({
     backgroundColor: COLORS.white || '#FFFFFF',
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
-    paddingHorizontal: 20,
+    paddingHorizontal: 24,
     paddingTop: 24,
     paddingBottom: 36,
     alignItems: 'center',
@@ -476,9 +493,9 @@ const styles = StyleSheet.create({
     justifyContent: 'space-between',
     alignItems: 'center',
     marginBottom: 8,
-    paddingHorizontal: 12,
   },
   dotWrapper: {
+    flex: 1,
     alignItems: 'center',
     justifyContent: 'center',
   },
@@ -500,7 +517,6 @@ const styles = StyleSheet.create({
   stageLabelsRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
-    paddingHorizontal: 0,
   },
   stageText: {
     fontSize: FONTS.size.body - 2,

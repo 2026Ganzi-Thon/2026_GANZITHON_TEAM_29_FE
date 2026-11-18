@@ -12,12 +12,35 @@ import { GLTFLoader } from 'three-stdlib';
 global.THREE = global.THREE || THREE;
 
 const CROP_MESH_MAP = {
-  '새싹채소_1': 'plant seedling 3d model.001',
-  '당근_1': 'plant seedling 3d model.004',
-  '토마토_1': 'plant seedling 3d model.009',
-  '옥수수_1': 'plant seedling 3d model.010',
-  '딸기_1': 'plant seedling 3d model.013',
-  '호박_1': 'plant seedling 3d model.020',
+  '새싹채소_새싹': 'cartoon_vegetables_3d_model001',
+  '새싹채소_1': 'plant_seedling_3d_model001',
+  '새싹채소_2': 'plant_seedling_3d_model002',
+  '새싹채소_3': 'plant_seedling_3d_model003',
+
+  '당근_새싹': 'cartoon_vegetables_3d_model001',
+  '당근_1': 'plant_seedling_3d_model004',
+  '당근_2': 'plant_seedling_3d_model005',
+  '당근_3': 'plant_seedling_3d_model006',
+
+  '토마토_새싹': 'cartoon_vegetables_3d_model001',
+  '토마토_1': 'plant_seedling_3d_model009',
+  '토마토_2': 'plant_seedling_3d_model008',
+  '토마토_3': 'tripo_mesh_b431ff45009',
+
+  '옥수수_새싹': 'cartoon_vegetables_3d_model001',
+  '옥수수_1': 'plant_seedling_3d_model010',
+  '옥수수_2': 'plant_seedling_3d_model011',
+  '옥수수_3': 'cartoon_vegetables_3d_model010',
+
+  '딸기_새싹': 'cartoon_vegetables_3d_model001',
+  '딸기_1': 'plant_seedling_3d_model013',
+  '딸기_2': 'plant_seedling_3d_model014',
+  '딸기_3': 'plant_seedling_3d_model015',
+
+  '호박_새싹': 'cartoon_vegetables_3d_model001',
+  '호박_1': 'plant_seedling_3d_model020',
+  '호박_2': 'plant_seedling_3d_model019',
+  '호박_3': 'plant_seedling_3d_model018',
 };
 
 async function readLocalFile(uri) {
@@ -25,9 +48,8 @@ async function readLocalFile(uri) {
     const response = await fetch(uri);
     if (response.ok) return await response.arrayBuffer();
   } catch (e) {
-    console.log('fetch로 GLB 읽기 실패, File로 다시 시도:', e?.message);
+    console.log('❌ fetch 실패:', e?.message);
   }
-
   const file = new File(uri);
   return await file.arrayBuffer();
 }
@@ -44,22 +66,13 @@ function createSafeGLTFLoader(prefix) {
       }
       const texturePromise = (async () => {
         const imageSource = parser.json.images[sourceIndex];
-        if (!imageSource) throw new Error(`텍스처 이미지 ${sourceIndex}를 찾을 수 없습니다.`);
-        if (imageSource.bufferView === undefined) {
-          throw new Error(`지원하지 않는 텍스처 형식입니다: ${sourceIndex}`);
-        }
-
+        if (!imageSource) throw new Error(`텍스처 ${sourceIndex} 없음`);
         const imageBuffer = await parser.getDependency('bufferView', imageSource.bufferView);
         const base64Data = encode(imageBuffer);
-        const mimeType = imageSource.mimeType || 'image/png';
-        const extension = mimeType.split('/')[1]?.replace('jpeg', 'jpg') || 'png';
-
-        // Date.now()를 제거하여 캐시 폴더에 중복 파일이 쌓이지 않도록 고정 파일명 사용
-        const textureUri = `${FileSystem.cacheDirectory}${prefix}_texture_${sourceIndex}.${extension}`;
+        const textureUri = `${FileSystem.cacheDirectory}${prefix}_texture_${sourceIndex}.png`;
         await FileSystem.writeAsStringAsync(textureUri, base64Data, {
           encoding: FileSystem.EncodingType.Base64,
         });
-
         const texture = await new Promise((resolve, reject) => {
           textureLoader.load(textureUri, resolve, undefined, reject);
         });
@@ -76,113 +89,69 @@ function createSafeGLTFLoader(prefix) {
   return loader;
 }
 
-// 1. 농장 모델 전역 캐싱
 let farmModelPromise = null;
-
-async function parseFarmModel() {
-  const modelAsset = Asset.fromModule(require('../../../assets/models/farms/farm_1.glb'));
-  await modelAsset.downloadAsync();
-
-  if (!modelAsset.localUri) {
-    throw new Error('농장 GLB 파일 경로를 찾을 수 없습니다.');
-  }
-
-  const arrayBuffer = await readLocalFile(modelAsset.localUri);
-  if (!arrayBuffer || arrayBuffer.byteLength === 0) {
-    throw new Error('농장 GLB 파일을 읽을 수 없습니다.');
-  }
-
-  const loader = createSafeGLTFLoader('farm');
-  const gltf = await new Promise((resolve, reject) => {
-    loader.parse(arrayBuffer, '', resolve, reject);
-  });
-
-  const farmModel = gltf.scene;
-
-  farmModel.traverse((child) => {
-    if (child.isMesh && child.material) {
-      child.material.roughness = 0.6;
-      child.material.metalness = 0.1;
-      if (child.material.map) {
-        child.material.map.encoding = THREE.sRGBEncoding;
-        child.material.map.flipY = false;
-      }
-      child.material.needsUpdate = true;
-    }
-  });
-
-  farmModel.updateMatrixWorld(true);
-
-  const boundingBox = new THREE.Box3().setFromObject(farmModel);
-  const center = new THREE.Vector3();
-  const size = new THREE.Vector3();
-  boundingBox.getCenter(center);
-  boundingBox.getSize(size);
-
-  farmModel.position.sub(center);
-  const maxDimension = Math.max(size.x, size.y, size.z);
-  if (maxDimension > 0) {
-    farmModel.scale.multiplyScalar(3.5 / maxDimension);
-  }
-
-  farmModel.updateMatrixWorld(true);
-  console.log('농장 3D 모델 및 텍스처 로딩 성공');
-
-  return farmModel;
-}
-
-function loadFarmModel() {
+async function loadFarmModel() {
   if (!farmModelPromise) {
-    farmModelPromise = parseFarmModel().catch((error) => {
-      farmModelPromise = null;
-      throw error;
-    });
+    farmModelPromise = (async () => {
+      const modelAsset = Asset.fromModule(require('../../../assets/models/farms/farm_1.glb'));
+      await modelAsset.downloadAsync();
+      const arrayBuffer = await readLocalFile(modelAsset.localUri);
+      const loader = createSafeGLTFLoader('farm');
+      const gltf = await new Promise((resolve, reject) => loader.parse(arrayBuffer, '', resolve, reject));
+      
+      const farmModel = gltf.scene;
+      farmModel.traverse((child) => {
+        if (child.isMesh && child.material) {
+          child.material.roughness = 0.6;
+          child.material.metalness = 0.1;
+          if (child.material.map) {
+            child.material.map.encoding = THREE.sRGBEncoding;
+            child.material.map.flipY = false;
+          }
+          child.material.needsUpdate = true;
+        }
+      });
+
+      farmModel.updateMatrixWorld(true);
+      const boundingBox = new THREE.Box3().setFromObject(farmModel);
+      const center = new THREE.Vector3();
+      const size = new THREE.Vector3();
+      boundingBox.getCenter(center);
+      boundingBox.getSize(size);
+
+      farmModel.position.sub(center);
+      const maxDimension = Math.max(size.x, size.y, size.z);
+      if (maxDimension > 0) {
+        farmModel.scale.multiplyScalar(3.5 / maxDimension);
+      }
+      farmModel.updateMatrixWorld(true);
+      return farmModel;
+    })();
   }
   return farmModelPromise;
 }
 
-// 2. 작물 모델 전역 캐싱 (한 번만 파싱하고 화면마다 clone해서 사용)
 let cropsModelPromise = null;
-
-async function parseCropsModel() {
-  const cropAsset = Asset.fromModule(require('../../../assets/models/farms/crops.glb'));
-  await cropAsset.downloadAsync();
-
-  if (!cropAsset.localUri) {
-    throw new Error('작물 GLB 파일 경로를 찾을 수 없습니다.');
-  }
-
-  const cropBuffer = await readLocalFile(cropAsset.localUri);
-  if (!cropBuffer || cropBuffer.byteLength === 0) {
-    throw new Error('작물 GLB 파일을 읽을 수 없습니다.');
-  }
-
-  const cropLoader = createSafeGLTFLoader('crop');
-  const cropGltf = await new Promise((resolve, reject) => {
-    cropLoader.parse(cropBuffer, '', resolve, reject);
-  });
-
-  const cropsScene = cropGltf.scene;
-  cropsScene.traverse((child) => {
-    if (child.isMesh && child.material) {
-      if (child.material.map) {
-        child.material.map.encoding = THREE.sRGBEncoding;
-        child.material.map.flipY = false;
-      }
-      child.material.needsUpdate = true;
-    }
-  });
-
-  console.log('작물 3D 모델 및 텍스처 로딩 성공');
-  return cropsScene;
-}
-
-function loadCropsModel() {
+async function loadCropsModel() {
   if (!cropsModelPromise) {
-    cropsModelPromise = parseCropsModel().catch((error) => {
-      cropsModelPromise = null;
-      throw error;
-    });
+    cropsModelPromise = (async () => {
+      const cropAsset = Asset.fromModule(require('../../../assets/models/farms/crops.glb'));
+      await cropAsset.downloadAsync();
+      const cropBuffer = await readLocalFile(cropAsset.localUri);
+      const cropLoader = createSafeGLTFLoader('crop');
+      const cropGltf = await new Promise((resolve, reject) => cropLoader.parse(cropBuffer, '', resolve, reject));
+      
+      cropGltf.scene.traverse((child) => {
+        if (child.isMesh && child.material) {
+          if (child.material.map) {
+            child.material.map.encoding = THREE.sRGBEncoding;
+            child.material.map.flipY = false;
+          }
+          child.material.needsUpdate = true;
+        }
+      });
+      return cropGltf.scene;
+    })();
   }
   return cropsModelPromise;
 }
@@ -200,12 +169,7 @@ export default function FarmScene3D({
   const isFocused = useIsFocused();
 
   return (
-    <View
-      style={[
-        styles.container,
-        { backgroundColor: `#${backgroundColor.toString(16).padStart(6, '0')}` },
-      ]}
-    >
+    <View style={[styles.container, { backgroundColor: `#${backgroundColor.toString(16).padStart(6, '0')}` }]}>
       <FarmCanvas
         backgroundColor={backgroundColor}
         visibleWidth={visibleWidth}
@@ -239,25 +203,28 @@ function FarmCanvas({
   const activeRef = useRef(active);
 
   const cameraRef = useRef(null);
+  const sceneRef = useRef(null);
+  const farmModelRef = useRef(null);
+  const cropsGroupRef = useRef(null);
   const plotMeshesRef = useRef([]);
   const plotCentersRef = useRef([]);
   const layoutRef = useRef({ width: 0, height: 0 });
   const touchStartRef = useRef(null);
+  const isSceneReadyRef = useRef(false);
 
   const selectedPlotIndexRef = useRef(selectedPlotIndex);
   const onSelectPlotRef = useRef(onSelectPlot);
   const plotsDataRef = useRef(plotsData);
 
-  useEffect(() => {
-    selectedPlotIndexRef.current = selectedPlotIndex;
-  }, [selectedPlotIndex]);
-
-  useEffect(() => {
-    onSelectPlotRef.current = onSelectPlot;
-  }, [onSelectPlot]);
-
+  useEffect(() => { selectedPlotIndexRef.current = selectedPlotIndex; }, [selectedPlotIndex]);
+  useEffect(() => { onSelectPlotRef.current = onSelectPlot; }, [onSelectPlot]);
+  
   useEffect(() => {
     plotsDataRef.current = plotsData;
+    // 💡 씬이 완전히 준비된 이후에만 안전하게 작물 업데이트 실행 (진입 시 튕김 방지)
+    if (isSceneReadyRef.current && sceneRef.current && farmModelRef.current) {
+      updateCrops();
+    }
   }, [plotsData]);
 
   useEffect(() => {
@@ -281,7 +248,6 @@ function FarmCanvas({
       }
 
       const isSelected = pIdx === selectedPlotIndex;
-
       if (isSelected) {
         mesh.material.color.setHex(0xffea75);
         mesh.material.emissive = new THREE.Color(0xfbfb36);
@@ -308,16 +274,90 @@ function FarmCanvas({
     };
   }, []);
 
+  const updateCrops = async () => {
+    try {
+      if (!sceneRef.current || !farmModelRef.current) return;
+      
+      if (cropsGroupRef.current) {
+        sceneRef.current.remove(cropsGroupRef.current);
+        cropsGroupRef.current = null;
+      }
+
+      const group = new THREE.Group();
+      sceneRef.current.add(group);
+      cropsGroupRef.current = group;
+
+      const cropsScene = await loadCropsModel();
+      if (!mountedRef.current) return;
+
+      const currentPlots = plotsDataRef.current;
+
+      if (currentPlots && currentPlots.length > 0) {
+        currentPlots.forEach((plot) => {
+          const pIndex = plot.plotIndex !== undefined ? plot.plotIndex : plot.id;
+          const { cropName, stage = 1, farmStatus } = plot;
+
+          if (farmStatus !== 'empty' && cropName) {
+            let targetKey = '';
+            if (stage === 1) targetKey = `${cropName}_새싹`;
+            else if (stage === 2) targetKey = `${cropName}_1`;
+            else if (stage === 3) targetKey = `${cropName}_1`;
+            else if (stage === 4) targetKey = `${cropName}_2`;
+            else targetKey = `${cropName}_3`;
+
+            const targetMeshName = CROP_MESH_MAP[targetKey];
+
+            if (targetMeshName) {
+              cropsScene.traverse((child) => {
+                if (child.isMesh && child.name === targetMeshName) {
+                  const cropClone = child.clone(true);
+                  
+                  cropClone.position.set(0, 0, 0);
+                  cropClone.rotation.set(0, 0, 0);
+                  cropClone.scale.set(1, 1, 1);
+
+                  if (cropClone.geometry) {
+                    cropClone.geometry = cropClone.geometry.clone();
+                    cropClone.geometry.computeBoundingBox();
+                    const box = cropClone.geometry.boundingBox;
+                    const meshCenter = new THREE.Vector3();
+                    box.getCenter(meshCenter);
+                    cropClone.geometry.translate(-meshCenter.x, -box.min.y, -meshCenter.z);
+                  }
+
+                  const plotCenter = plotCentersRef.current[pIndex];
+                  if (plotCenter) {
+                    const farmScale = farmModelRef.current.scale.x;
+                    
+                    // 💡 사용자님이 맞추신 정확한 `- 2.1` 오프셋 적용
+                    cropClone.position.set(
+                      plotCenter.x,
+                      plotCenter.y + (modelOffsetY || 0) - 2.1, 
+                      plotCenter.z
+                    );
+                    cropClone.scale.multiplyScalar(farmScale * 0.85);
+                    group.add(cropClone);
+                  }
+                }
+              });
+            }
+          }
+        });
+      }
+    } catch (err) {
+      console.error('❌ updateCrops 에러:', err);
+    }
+  };
+
   const onContextCreate = async (gl) => {
     try {
+      isSceneReadyRef.current = false;
       const width = gl.drawingBufferWidth;
       const height = gl.drawingBufferHeight;
-
       if (width === 0 || height === 0) return;
 
       const renderer = new Renderer({ gl, alpha: false, antialias: true });
       rendererRef.current = renderer;
-
       renderer.setSize(width, height);
       renderer.setPixelRatio(1);
       renderer.setClearColor(backgroundColor, 1);
@@ -329,9 +369,9 @@ function FarmCanvas({
 
       const scene = new THREE.Scene();
       scene.background = new THREE.Color(backgroundColor);
+      sceneRef.current = scene;
 
       const camera = new THREE.PerspectiveCamera(35, width / height, 0.1, 1000);
-
       if (cameraPos && cameraPos.length >= 3) {
         camera.position.set(cameraPos[0], cameraPos[1], cameraPos[2]);
       } else if (visibleWidth) {
@@ -343,96 +383,51 @@ function FarmCanvas({
       } else {
         camera.position.set(0, 5, 8);
       }
-
       camera.lookAt(0, 0, 0);
       cameraRef.current = camera;
 
       scene.add(new THREE.AmbientLight(0xffffff, 1.5));
+      const light = new THREE.DirectionalLight(0xffffff, 1.2);
+      light.position.set(5, 10, 7);
+      scene.add(light);
 
-      const directionalLight = new THREE.DirectionalLight(0xffffff, 1.2);
-      directionalLight.position.set(5, 10, 7);
-      scene.add(directionalLight);
-
-      // 1. 캐싱된 농장 모델 복제 후 배치
-      const baseFarmModel = await loadFarmModel();
+      const farmModel = await loadFarmModel();
       if (!mountedRef.current) return;
-
-      const farmModel = baseFarmModel.clone();
-
-      if (modelOffsetY) {
-        farmModel.position.y += modelOffsetY;
-      }
-      farmModel.updateMatrixWorld(true);
-      scene.add(farmModel);
+      const clonedFarm = farmModel.clone();
+      if (modelOffsetY) clonedFarm.position.y += modelOffsetY;
+      clonedFarm.updateMatrixWorld(true);
+      scene.add(clonedFarm);
+      farmModelRef.current = clonedFarm;
 
       const plotMeshes = [];
-      farmModel.traverse((child) => {
+      clonedFarm.traverse((child) => {
         if (child.isMesh) {
-          const name = child.name || child.parent?.name || '';
-          const match = name.match(/plot_(\d+)/i);
+          const match = (child.name || child.parent?.name || '').match(/plot_(\d+)/i);
           if (match) {
-            const idx = parseInt(match[1], 10);
-            child.userData.plotIndex = idx;
+            child.userData.plotIndex = parseInt(match[1], 10);
             plotMeshes.push(child);
           }
         }
       });
+      plotMeshesRef.current = plotMeshes;
 
       const plotCenters = [];
       for (let i = 0; i < 12; i++) {
         const mesh = plotMeshes.find((m) => m.userData.plotIndex === i);
         if (mesh) {
+          mesh.updateMatrixWorld(true);
           const box = new THREE.Box3().setFromObject(mesh);
           const c = new THREE.Vector3();
           box.getCenter(c);
-          plotCenters[i] = c;
+          plotCenters[i] = new THREE.Vector3(c.x, box.max.y, c.z);
         }
       }
-
-      plotMeshesRef.current = plotMeshes;
       plotCentersRef.current = plotCenters;
 
-      // 2. 캐싱된 작물 모델(crops.glb) 불러와서 필요한 작물만 복제(clone) 배치
-      try {
-        const cropsScene = await loadCropsModel();
-        if (!mountedRef.current) return;
+      await updateCrops();
+      if (!mountedRef.current) return;
+      isSceneReadyRef.current = true; // 💡 씬과 작물 로딩이 모두 끝난 뒤 플래그 해제
 
-        if (plotsDataRef.current && plotsDataRef.current.length > 0) {
-          plotsDataRef.current.forEach((plot) => {
-            const pIndex = plot.plotIndex !== undefined ? plot.plotIndex : plot.id;
-            const { cropName, stage = 1, farmStatus } = plot;
-
-            if (farmStatus !== 'empty' && cropName) {
-              const targetKey = `${cropName}_${stage}`;
-              const targetMeshName = CROP_MESH_MAP[targetKey];
-
-              if (targetMeshName) {
-                cropsScene.traverse((child) => {
-                  if (child.isMesh && child.name === targetMeshName) {
-                    const cropClone = child.clone(true);
-                    const plotCenter = plotCenters[pIndex];
-
-                    if (plotCenter) {
-                      const farmScale = farmModel.scale.x;
-                      cropClone.position.set(
-                        plotCenter.x,
-                        plotCenter.y + (modelOffsetY || 0),
-                        plotCenter.z
-                      );
-                      cropClone.scale.multiplyScalar(farmScale);
-                      scene.add(cropClone);
-                    }
-                  }
-                });
-              }
-            }
-          });
-        }
-      } catch (cropErr) {
-        console.log('작물 모델(crops.glb) 로드 실패:', cropErr?.message);
-      }
-
-      // 초기 선택된 밭 하이라이트 반영
       const currentSelected = selectedPlotIndexRef.current;
       if (currentSelected !== null && currentSelected !== undefined) {
         plotMeshes.forEach((mesh) => {
@@ -457,95 +452,45 @@ function FarmCanvas({
           animationRef.current = null;
           return;
         }
-
         animationRef.current = requestAnimationFrame(render);
         renderer.render(scene, camera);
         gl.endFrameEXP();
       };
-
       renderRef.current = render;
       render();
     } catch (error) {
-      console.error('농장 3D 모델 로딩 실패:', error);
-    }
-  };
-
-  const handleTouchStart = (evt) => {
-    touchStartRef.current = {
-      x: evt.nativeEvent.locationX,
-      y: evt.nativeEvent.locationY,
-      time: Date.now(),
-    };
-  };
-
-  const handleTouchEnd = (evt) => {
-    if (!onSelectPlotRef.current || !touchStartRef.current) return;
-    const { locationX, locationY } = evt.nativeEvent;
-    const dx = Math.abs(locationX - touchStartRef.current.x);
-    const dy = Math.abs(locationY - touchStartRef.current.y);
-    const dt = Date.now() - touchStartRef.current.time;
-
-    if (dx > 18 || dy > 18 || dt > 500) return;
-
-    const camera = cameraRef.current;
-    const plotMeshes = plotMeshesRef.current;
-    const { width, height } = layoutRef.current;
-
-    if (!camera || !width || !height) return;
-
-    const mouse = new THREE.Vector2();
-    mouse.x = (locationX / width) * 2 - 1;
-    mouse.y = -(locationY / height) * 2 + 1;
-
-    const raycaster = new THREE.Raycaster();
-    raycaster.setFromCamera(mouse, camera);
-
-    if (plotMeshes.length > 0) {
-      const hits = raycaster.intersectObjects(plotMeshes, true);
-      if (hits.length > 0) {
-        const hitObj = hits[0].object;
-        const pIdx = hitObj.userData?.plotIndex ?? hitObj.parent?.userData?.plotIndex;
-        if (pIdx !== undefined && pIdx !== null) {
-          onSelectPlotRef.current(pIdx);
-          return;
-        }
-      }
-    }
-
-    if (plotCentersRef.current.length > 0) {
-      let closestIndex = -1;
-      let minDistanceSq = Infinity;
-
-      plotCentersRef.current.forEach((center, idx) => {
-        if (!center) return;
-        const vector = center.clone();
-        vector.project(camera);
-
-        const screenX = ((vector.x + 1) * width) / 2;
-        const screenY = ((-vector.y + 1) * height) / 2;
-
-        const distSq = (locationX - screenX) ** 2 + (locationY - screenY) ** 2;
-        if (distSq < minDistanceSq) {
-          minDistanceSq = distSq;
-          closestIndex = idx;
-        }
-      });
-
-      if (closestIndex !== -1 && minDistanceSq < 7000) {
-        onSelectPlotRef.current(closestIndex);
-      }
+      console.error('❌ 농장 3D 모델 로딩 실패:', error);
     }
   };
 
   return (
     <View
       style={styles.glView}
-      onLayout={(e) => {
-        layoutRef.current = e.nativeEvent.layout;
-      }}
+      onLayout={(e) => { layoutRef.current = e.nativeEvent.layout; }}
       onStartShouldSetResponder={() => !!onSelectPlot}
-      onResponderGrant={handleTouchStart}
-      onResponderRelease={handleTouchEnd}
+      onResponderGrant={(e) => {
+        touchStartRef.current = { x: e.nativeEvent.locationX, y: e.nativeEvent.locationY, time: Date.now() };
+      }}
+      onResponderRelease={(e) => {
+        if (!onSelectPlotRef.current || !touchStartRef.current) return;
+        const { locationX, locationY } = e.nativeEvent;
+        const camera = cameraRef.current;
+        const plotMeshes = plotMeshesRef.current;
+        const { width, height } = layoutRef.current;
+        if (!camera || !width || !height) return;
+
+        const mouse = new THREE.Vector2((locationX / width) * 2 - 1, -(locationY / height) * 2 + 1);
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, camera);
+
+        if (plotMeshes.length > 0) {
+          const hits = raycaster.intersectObjects(plotMeshes, true);
+          if (hits.length > 0) {
+            const pIdx = hits[0].object.userData?.plotIndex ?? hits[0].object.parent?.userData?.plotIndex;
+            if (pIdx !== undefined) onSelectPlotRef.current(pIdx);
+          }
+        }
+      }}
     >
       <GLView style={styles.glView} onContextCreate={onContextCreate} />
     </View>
@@ -553,18 +498,6 @@ function FarmCanvas({
 }
 
 const styles = StyleSheet.create({
-  container: {
-    position: 'absolute',
-    top: 0,
-    left: 0,
-    right: 0,
-    bottom: 0,
-    width: '100%',
-    height: '100%',
-    backgroundColor: '#F5F1E8',
-  },
-  glView: {
-    width: '100%',
-    height: '100%',
-  },
+  container: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%', backgroundColor: '#F5F1E8' },
+  glView: { width: '100%', height: '100%' },
 });
