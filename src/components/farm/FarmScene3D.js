@@ -515,4 +515,48 @@ function FarmCanvas({
           console.log('❌ 렌더 프레임 에러:', renderErr?.message);
         }
       };
-      renderRef.
+      renderRef.current = render;
+      render();
+    } catch (error) {
+      console.log('❌ 농장 3D 모델 로딩 실패:', error?.message);
+    }
+  };
+
+  return (
+    <View
+      style={styles.glView}
+      onLayout={(e) => { layoutRef.current = e.nativeEvent.layout; }}
+      onStartShouldSetResponder={() => !!onSelectPlot}
+      onResponderGrant={(e) => {
+        touchStartRef.current = { x: e.nativeEvent.locationX, y: e.nativeEvent.locationY, time: Date.now() };
+      }}
+      onResponderRelease={(e) => {
+        if (!onSelectPlotRef.current || !touchStartRef.current) return;
+        const { locationX, locationY } = e.nativeEvent;
+        const camera = cameraRef.current;
+        const plotMeshes = plotMeshesRef.current;
+        const { width, height } = layoutRef.current;
+        if (!camera || !width || !height) return;
+
+        const mouse = new THREE.Vector2((locationX / width) * 2 - 1, -(locationY / height) * 2 + 1);
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(mouse, camera);
+
+        if (plotMeshes.length > 0) {
+          const hits = raycaster.intersectObjects(plotMeshes, true);
+          if (hits.length > 0) {
+            const pIdx = hits[0].object.userData?.plotIndex ?? hits[0].object.parent?.userData?.plotIndex;
+            if (pIdx !== undefined) onSelectPlotRef.current(pIdx);
+          }
+        }
+      }}
+    >
+      <GLView style={styles.glView} onContextCreate={onContextCreate} />
+    </View>
+  );
+}
+
+const styles = StyleSheet.create({
+  container: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%', backgroundColor: '#F5F1E8' },
+  glView: { width: '100%', height: '100%' },
+});
