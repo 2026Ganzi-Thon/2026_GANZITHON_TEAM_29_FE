@@ -5,6 +5,8 @@ import FarmSheetLayout from '../../components/common/FarmSheetLayout';
 import AppButton from '../../components/common/AppButton';
 import AppTextInput from '../../components/common/AppTextInput';
 import { COLORS } from '../../styles/colors';
+import { signUp } from '../../lib/auth';
+import { authErrorMessage } from '../../lib/errors';
 
 // S19 회원가입 (이메일, 비밀번호, 닉네임)
 export default function S19Screen({ navigation }) {
@@ -12,8 +14,11 @@ export default function S19Screen({ navigation }) {
   const [password, setPassword] = useState('');
   const [nickname, setNickname] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
-  const signUp = async () => {
+  const submit = async () => {
+    if (loading) return;
+
     if (!email.trim() || !password || !nickname.trim()) {
       setError('모든 칸을 입력해 주세요');
       return;
@@ -28,9 +33,23 @@ export default function S19Screen({ navigation }) {
     }
 
     setError('');
+    setLoading(true);
 
-    // TODO: Supabase 회원가입 + profiles.nickname 저장
-    navigation.reset({ index: 0, routes: [{ name: 'S01' }] });
+    try {
+      const session = await signUp(email.trim(), password, nickname.trim());
+
+      if (!session) {
+        setError('가입은 됐어요. 로그인해 주세요');
+        setLoading(false);
+        navigation.popTo('S18');
+        return;
+      }
+
+      navigation.reset({ index: 0, routes: [{ name: 'S01' }] });
+    } catch (e) {
+      setError(authErrorMessage(e, '가입에 실패했어요. 잠시 후 다시 시도해 주세요'));
+      setLoading(false);
+    }
   };
 
   const backToLogin = () => {
@@ -65,13 +84,18 @@ export default function S19Screen({ navigation }) {
         onChangeText={setNickname}
         maxLength={12}
         returnKeyType="done"
-        onSubmitEditing={signUp}
+        onSubmitEditing={submit}
         style={styles.input}
       />
 
       {!!error && <Text style={styles.error}>{error}</Text>}
 
-      <AppButton title="가입하기" onPress={signUp} style={styles.signUpButton} />
+      <AppButton
+        title={loading ? '가입 중...' : '가입하기'}
+        onPress={submit}
+        disabled={loading}
+        style={styles.signUpButton}
+      />
       <AppButton title="로그인으로 돌아가기" variant="outline" onPress={backToLogin} />
     </FarmSheetLayout>
   );
