@@ -1,6 +1,10 @@
-import React from 'react';
-import { NavigationContainer } from '@react-navigation/native';
+import React, { useEffect, useState } from 'react';
+import { ActivityIndicator, StyleSheet, View } from 'react-native';
+import { NavigationContainer, createNavigationContainerRef } from '@react-navigation/native';
 import { createNativeStackNavigator } from '@react-navigation/native-stack';
+
+import { supabase } from '../lib/supabase';
+import { getStartScreen } from '../lib/auth';
 
 import S01Screen from '../screens/S01/S01Screen';
 import S02Screen from '../screens/S02/S02Screen';
@@ -24,11 +28,48 @@ import S19Screen from '../screens/S19/S19Screen';
 
 const Stack = createNativeStackNavigator();
 
+// 개발할 때 특정 화면부터 보고 싶으면 화면 이름을 넣기 (예: 'S10'). 커밋할 땐 null
+const DEV_START_SCREEN = 'null';
+
+export const navigationRef = createNavigationContainerRef();
+
 export default function AppNavigator() {
+  const [startScreen, setStartScreen] = useState(DEV_START_SCREEN);
+
+  useEffect(() => {
+    if (DEV_START_SCREEN) return;
+
+    getStartScreen()
+      .then(setStartScreen)
+      .catch((error) => {
+        console.error('시작 화면 확인 실패:', error);
+        setStartScreen('S18');
+      });
+  }, []);
+
+  // 어느 화면에서든 로그아웃되면 로그인 화면으로
+  useEffect(() => {
+    const { data } = supabase.auth.onAuthStateChange((event) => {
+      if (event === 'SIGNED_OUT' && navigationRef.isReady()) {
+        navigationRef.reset({ index: 0, routes: [{ name: 'S18' }] });
+      }
+    });
+
+    return () => data.subscription.unsubscribe();
+  }, []);
+
+  if (!startScreen) {
+    return (
+      <View style={styles.loading}>
+        <ActivityIndicator size="large" color="#212121" />
+      </View>
+    );
+  }
+
   return (
-    <NavigationContainer>
+    <NavigationContainer ref={navigationRef}>
       <Stack.Navigator
-        initialRouteName="S01"
+        initialRouteName={startScreen}
         screenOptions={{
           headerShown: false,
         }}
@@ -56,3 +97,12 @@ export default function AppNavigator() {
     </NavigationContainer>
   );
 }
+
+const styles = StyleSheet.create({
+  loading: {
+    flex: 1,
+    alignItems: 'center',
+    justifyContent: 'center',
+    backgroundColor: '#ACD066',
+  },
+});

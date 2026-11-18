@@ -5,24 +5,43 @@ import FarmSheetLayout from '../../components/common/FarmSheetLayout';
 import AppButton from '../../components/common/AppButton';
 import AppTextInput from '../../components/common/AppTextInput';
 import { COLORS } from '../../styles/colors';
+import { getStartScreen, signIn } from '../../lib/auth';
+import { authErrorMessage } from '../../lib/errors';
 
 // S18 로그인
 export default function S18Screen({ navigation }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
+  const [loading, setLoading] = useState(false);
 
   const login = async () => {
+    if (loading) return;
+
     if (!email.trim() || !password) {
       setError('이메일과 비밀번호를 입력해 주세요');
       return;
     }
 
     setError('');
+    setLoading(true);
 
-    // TODO: Supabase 로그인 연결, 실패하면 setError('이메일 또는 비밀번호가 맞지 않아요')
-    // TODO: 기록이 없으면 S02로
-    navigation.reset({ index: 0, routes: [{ name: 'S03' }] });
+    try {
+      await signIn(email.trim(), password);
+    } catch (e) {
+      setError(authErrorMessage(e, '로그인에 실패했어요. 잠시 후 다시 시도해 주세요'));
+      setLoading(false);
+      return;
+    }
+
+    let nextScreen = 'S03';
+    try {
+      nextScreen = await getStartScreen();
+    } catch (e) {
+      console.error('시작 화면 확인 실패:', e);
+    }
+
+    navigation.reset({ index: 0, routes: [{ name: nextScreen }] });
   };
 
   return (
@@ -52,7 +71,12 @@ export default function S18Screen({ navigation }) {
 
       {!!error && <Text style={styles.error}>{error}</Text>}
 
-      <AppButton title="로그인" onPress={login} style={styles.loginButton} />
+      <AppButton
+        title={loading ? '로그인 중...' : '로그인'}
+        onPress={login}
+        disabled={loading}
+        style={styles.loginButton}
+      />
       <AppButton
         title="회원가입"
         variant="outline"

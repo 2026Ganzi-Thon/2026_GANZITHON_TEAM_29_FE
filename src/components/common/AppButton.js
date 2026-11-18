@@ -14,15 +14,18 @@ import { COLORS } from '../../styles/colors';
  * 사용법:
  *   <AppButton title="수확하기" onPress={...} />
  *   <AppButton title="나중에" variant="outline" onPress={...} />
+ *   <AppButton title="저장" disabled={loading} onPress={...} />  ← 요청 중 중복 누름 방지
  */
-export default function AppButton({ title, onPress, variant = 'primary', style }) {
+export default function AppButton({ title, onPress, variant = 'primary', style, disabled = false }) {
   return (
     <Pressable
       onPress={onPress}
+      disabled={disabled}
       style={({ pressed }) => [
         styles.base,
         styles[variant],
         pressed && styles.pressed,
+        disabled && styles.disabled,
         style,
       ]}
     >
@@ -56,6 +59,10 @@ const styles = StyleSheet.create({
 
   pressed: {
     opacity: 0.7,
+  },
+
+  disabled: {
+    opacity: 0.4,
   },
 
   textBase: {
