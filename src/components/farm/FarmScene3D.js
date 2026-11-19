@@ -91,8 +91,6 @@ function createSafeGLTFLoader(prefix) {
 
 function safeConfigureMaterial(mat) {
   if (!mat) return mat;
-  if ('roughness' in mat) mat.roughness = 0.6;
-  if ('metalness' in mat) mat.metalness = 0.1;
   if (mat.map) {
     mat.map.encoding = THREE.sRGBEncoding;
     mat.map.flipY = false;
@@ -216,7 +214,7 @@ function FarmCanvas({
   const sceneRef = useRef(null);
   const farmModelRef = useRef(null);
   const cropsGroupRef = useRef(null);
-  const needsRenderLogRef = useRef(false);
+  const lastCropsKeyRef = useRef(null);
   const plotMeshesRef = useRef([]);
   const plotCentersRef = useRef([]);
   const layoutRef = useRef({ width: 0, height: 0 });
@@ -307,6 +305,15 @@ function FarmCanvas({
     try {
       if (!sceneRef.current || !farmModelRef.current || !mountedRef.current) return;
 
+      // 타이머 때문에 plotsData가 매초 새로 들어와도, 작물·단계가 그대로면 다시 만들지 않음
+      const cropsKey = (plotsDataRef.current || [])
+        .map((plot) => {
+          const pIndex = plot.plotIndex !== undefined ? plot.plotIndex : plot.id;
+          return `${pIndex}:${plot.farmStatus}:${plot.cropName}:${plot.stage ?? 1}`;
+        })
+        .join('|');
+      if (cropsKey === lastCropsKeyRef.current) return;
+
       const cropsScene = await loadCropsModel();
       if (!mountedRef.current || !sceneRef.current || !farmModelRef.current) return;
 
@@ -369,10 +376,14 @@ function FarmCanvas({
       const prevGroup = cropsGroupRef.current;
       cropsGroupRef.current = nextGroup;
       sceneRef.current.add(nextGroup);
-      needsRenderLogRef.current = true;
+      lastCropsKeyRef.current = cropsKey;
 
       if (prevGroup) {
         sceneRef.current.remove(prevGroup);
+        // 작물마다 복사한 geometry는 직접 지워야 메모리가 안 쌓임 (material은 원본과 공유라 그대로 둠)
+        prevGroup.traverse((child) => {
+          if (child.isMesh) child.geometry?.dispose();
+        });
       }
     } catch (err) {
       console.log('❌ updateCrops 에러:', err?.message);
@@ -399,7 +410,7 @@ function FarmCanvas({
       renderer.setClearColor(backgroundColor, 1);
       renderer.outputEncoding = THREE.sRGBEncoding;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.0;
+      renderer.toneMappingExposure = 0.8;
 
       gl.viewport(0, 0, width, height);
 
@@ -422,8 +433,8 @@ function FarmCanvas({
       camera.lookAt(0, 0, 0);
       cameraRef.current = camera;
 
-      scene.add(new THREE.AmbientLight(0xffffff, 1.5));
-      const light = new THREE.DirectionalLight(0xffffff, 1.2);
+      scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+      const light = new THREE.DirectionalLight(0xffffff, 0.7);
       light.position.set(5, 10, 7);
       scene.add(light);
 
@@ -498,19 +509,8 @@ function FarmCanvas({
         }
         animationRef.current = requestAnimationFrame(render);
         try {
-          const shouldLog = needsRenderLogRef.current;
-          if (shouldLog) {
-            needsRenderLogRef.current = false;
-            console.log('🎬 [RENDER] renderer.render 호출 전');
-          }
           renderer.render(scene, camera);
-          if (shouldLog) {
-            console.log('🎬 [RENDER] gl.endFrameEXP 호출 전');
-          }
           gl.endFrameEXP();
-          if (shouldLog) {
-            console.log('🎬 [RENDER] 프레임 완료');
-          }
         } catch (renderErr) {
           console.log('❌ 렌더 프레임 에러:', renderErr?.message);
         }
@@ -559,4 +559,4 @@ function FarmCanvas({
 const styles = StyleSheet.create({
   container: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%', backgroundColor: '#F5F1E8' },
   glView: { width: '100%', height: '100%' },
-});
+});
