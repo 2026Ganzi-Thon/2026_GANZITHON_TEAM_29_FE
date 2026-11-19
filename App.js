@@ -2,13 +2,39 @@ import React, { useEffect, useRef } from 'react';
 import { AppState } from 'react-native';
 import { StatusBar } from 'expo-status-bar';
 import { SafeAreaProvider } from 'react-native-safe-area-context';
-import AppNavigator from './src/navigation/AppNavigator';
-import { supabase } from './src/utils/supabase';
+import AppNavigator, { navigationRef } from './src/navigation/AppNavigator';
+import { supabase } from './src/lib/supabase';
 
 const NON_ACTIVE_STATUSES = ['paused', 'completed', 'harvested', 'finished', 'cancelled'];
 
+function resolveRemainingSeconds(sessionObj) {
+  if (!sessionObj) return null;
+
+  const endField = sessionObj.ends_at || sessionObj.expires_at || sessionObj.end_at;
+  if (endField) {
+    const endMs = new Date(endField).getTime();
+    if (!Number.isNaN(endMs)) {
+      return Math.max(0, Math.round((endMs - Date.now()) / 1000));
+    }
+  }
+
+  const targetSec = Number(sessionObj.target_seconds || sessionObj.targetSeconds || 0);
+  if (sessionObj.started_at && targetSec > 0) {
+    const startMs = new Date(sessionObj.started_at).getTime();
+    if (!Number.isNaN(startMs)) {
+      const elapsedSec = Math.round((Date.now() - startMs) / 1000);
+      return Math.max(0, targetSec - elapsedSec);
+    }
+  }
+
+  if (sessionObj.remaining_seconds !== undefined && sessionObj.remaining_seconds !== null) {
+    return Math.max(0, Math.round(Number(sessionObj.remaining_seconds)));
+  }
+
+  return null;
+}
+
 export default function App() {
-  const navigationRef = useRef(null);
   const isCheckingRef = useRef(false);
 
   const redirectIfActiveFocus = async () => {
@@ -16,26 +42,24 @@ export default function App() {
     isCheckingRef.current = true;
 
     try {
-      const nav = navigationRef.current;
-      if (!nav || !nav.isReady()) return;
+      if (!navigationRef.isReady()) return;
 
       const { data, error } = await supabase.rpc('get_active_focus');
-      if (error) return;
+      if (error) {
+        console.log('❌ [App] get_active_focus 에러:', error.message);
+        return;
+      }
 
       const activeSession = data?.session ?? data ?? null;
       if (!activeSession) return;
 
       const status = String(activeSession.status || '').toLowerCase();
-      // 일시정지(paused) 및 이미 끝난 세션은 S06으로 강제 이동하지 않음
       if (NON_ACTIVE_STATUSES.includes(status)) return;
 
-      const remaining =
-        activeSession.remaining_seconds !== undefined && activeSession.remaining_seconds !== null
-          ? Number(activeSession.remaining_seconds)
-          : null;
+      const remaining = resolveRemainingSeconds(activeSession);
       if (remaining !== null && remaining <= 0) return;
 
-      const currentRouteName = nav.getCurrentRoute()?.name;
+      const currentRouteName = navigationRef.getCurrentRoute()?.name;
       if (currentRouteName === 'S06') return;
 
       const plotIdx =
@@ -43,35 +67,61 @@ export default function App() {
           ? Math.max(0, activeSession.plot_index - 1)
           : 0;
 
-      nav.navigate('S06', {
-        plotIndex: plotIdx,
-        cropId: activeSession.crop_id,
-        sessionId: activeSession.session_id,
-        cropName: activeSession.crop_name,
+      const targetSec =
+        activeSession.target_seconds || activeSession.targetSeconds || undefined;
+
+      navigationRef.reset({
+        index: 1,
+        routes: [
+          { name: 'S03' },
+          {
+            name: 'S06',
+            params: {
+              plotIndex: plotIdx,
+              cropId: activeSession.crop_id,
+              sessionId: activeSession.session_id,
+              cropName: activeSession.crop_name,
+              ...(targetSec ? { targetSeconds: Number(targetSec) } : {}),
+              ...(remaining !== null ? { remainingSeconds: remaining } : {}),
+            },
+          },
+        ],
       });
     } catch (e) {
-      // 무시
+      console.log('❌ [App] redirectIfActiveFocus 예외:', e?.message);
     } finally {
       isCheckingRef.current = false;
     }
   };
 
   useEffect(() => {
+    // startScreen 로딩이 끝나고 NavigationContainer가 준비될 때까지 짧게 폴링 후 1회 실행
+    let attempts = 0;
+    const pollTimer = setInterval(() => {
+      attempts += 1;
+      if (navigationRef.isReady()) {
+        clearInterval(pollTimer);
+        redirectIfActiveFocus();
+      } else if (attempts >= 30) {
+        clearInterval(pollTimer);
+      }
+    }, 100);
+
     const sub = AppState.addEventListener('change', (nextState) => {
       if (nextState === 'active') {
         redirectIfActiveFocus();
       }
     });
 
-    return () => sub.remove();
+    return () => {
+      clearInterval(pollTimer);
+      sub.remove();
+    };
   }, []);
 
   return (
     <SafeAreaProvider>
-      <AppNavigator
-        ref={navigationRef}
-        onReady={redirectIfActiveFocus}
-      />
+      <AppNavigator />
       <StatusBar style="auto" />
     </SafeAreaProvider>
   );
