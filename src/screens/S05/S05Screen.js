@@ -98,11 +98,21 @@ export default function S05Screen({ route, navigation }) {
 
   const handleStartFocus = () => {
     if (!selectedCrop) return;
-    navigation.navigate('S06', {
-      plotIndex,
-      cropId: selectedCrop.crop_id || selectedCrop.id,
-      cropName: selectedCrop.name,
-      targetSeconds: selectedCrop.target_seconds || selectedCrop.targetSeconds || 600,
+    // 키우기 화면 밑에는 농장(S03)만 남겨서, 뒤로 가면 작물 고르기가 아니라 농장으로 가게 함
+    navigation.reset({
+      index: 1,
+      routes: [
+        { name: 'S03' },
+        {
+          name: 'S06',
+          params: {
+            plotIndex,
+            cropId: selectedCrop.crop_id || selectedCrop.id,
+            cropName: selectedCrop.name,
+            targetSeconds: selectedCrop.target_seconds || selectedCrop.targetSeconds || 600,
+          },
+        },
+      ],
     });
   };
 

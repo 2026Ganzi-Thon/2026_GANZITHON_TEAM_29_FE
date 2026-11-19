@@ -1,4 +1,4 @@
-﻿import React from 'react';
+﻿import React, { useState } from 'react';
 import {
   View,
   Text,
@@ -9,8 +9,33 @@ import {
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { COLORS } from '../../styles/colors';
 import FarmScene3D from '../../components/farm/FarmScene3D';
+import { supabase } from '../../lib/supabase';
 
 export default function S01Screen({ navigation }) {
+  const [starting, setStarting] = useState(false);
+  const [error, setError] = useState('');
+
+  // 농장 12칸 만들기(ensure_farm) → 온보딩 완료(complete_onboarding) 순서. 둘 다 여러 번 불러도 안전함
+  const handleStart = async () => {
+    if (starting) return;
+    setStarting(true);
+    setError('');
+
+    try {
+      const farm = await supabase.rpc('ensure_farm');
+      if (farm.error) throw farm.error;
+
+      const onboarding = await supabase.rpc('complete_onboarding');
+      if (onboarding.error) throw onboarding.error;
+
+      navigation.reset({ index: 0, routes: [{ name: 'S02' }] });
+    } catch (e) {
+      console.log('농장 만들기 실패:', e?.message);
+      setError('잠시 후 다시 시도해 주세요');
+      setStarting(false);
+    }
+  };
+
   return (
     <View style={styles.container}>
       {/* 3D 배경에 cameraPos와 modelOffsetY 전달 */}
@@ -56,11 +81,14 @@ export default function S01Screen({ navigation }) {
               </Text>
             </View>
 
+            {!!error && <Text style={styles.errorText}>{error}</Text>}
+
             <Pressable
-              style={styles.startButton}
-              onPress={() => navigation.navigate('S02')}
+              style={[styles.startButton, starting && styles.startButtonDisabled]}
+              onPress={handleStart}
+              disabled={starting}
             >
-              <Text style={styles.buttonText}>시작하기</Text>
+              <Text style={styles.buttonText}>{starting ? '농장 만드는 중...' : '시작하기'}</Text>
             </Pressable>
           </View>
         </View>
@@ -162,5 +190,14 @@ const styles = StyleSheet.create({
     fontSize: 16,
     fontWeight: '700',
     color: COLORS.white,
+  },
+  startButtonDisabled: {
+    opacity: 0.5,
+  },
+  errorText: {
+    marginBottom: 8,
+    fontSize: 13,
+    color: '#E5484D',
+    textAlign: 'center',
   },
 });

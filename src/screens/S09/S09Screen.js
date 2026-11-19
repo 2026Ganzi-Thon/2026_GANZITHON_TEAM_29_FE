@@ -24,8 +24,10 @@ export default function S09Screen({ route, navigation }) {
     focusSeconds: previewData?.focusSeconds ?? previewData?.focus_seconds ?? 0,
     progress: previewData?.progress ?? 0,
     result: previewData?.result ?? 'SEED',
-    previewId: previewData?.previewId ?? previewData?.preview_id ?? null,
+    // preview_stop_focus가 주는 확정용 토큰 (confirm/cancel_stop_focus에 씀)
+    stopToken: previewData?.stop_token ?? null,
   });
+  const isServerSession = !!sessionId && !String(sessionId).startsWith('local_');
 
   useEffect(() => {
     fetchFarmAndPreviewData();
@@ -36,10 +38,10 @@ export default function S09Screen({ route, navigation }) {
       const { data: farmData } = await supabase.rpc('get_my_farm');
       if (farmData) {
         const formattedPlots = Array.from({ length: 12 }, (_, index) => {
-          const idx = index + 1;
-          const serverPlot = farmData.find(item => item.plot_index === idx);
+          const serverPlot = farmData.find(item => item.plot_index === index + 1);
           return {
-            id: idx,
+            id: index,
+            plotIndex: index,
             plotId: serverPlot?.plot_id || null,
             farmStatus: serverPlot?.farm_status || 'empty',
             cropName: serverPlot?.crop_name || '작물',
@@ -49,7 +51,7 @@ export default function S09Screen({ route, navigation }) {
       }
 
     
-      if (!previewData && sessionId) {
+      if (!previewData?.stop_token && isServerSession) {
         setLoading(true);
         const { data, error } = await supabase.rpc('preview_stop_focus', {
           p_session_id: sessionId,
@@ -57,11 +59,11 @@ export default function S09Screen({ route, navigation }) {
 
         if (!error && data) {
           setStopInfo({
-            focusMinutes: data.focusMinutes ?? data.focus_minutes ?? 0,
-            focusSeconds: data.focusSeconds ?? data.focus_seconds ?? 0,
-            progress: data.progress ?? 0,
-            result: data.result ?? 'SEED',
-            previewId: data.previewId ?? data.preview_id ?? null,
+            focusMinutes: data.focus_minutes ?? 0,
+            focusSeconds: data.focused_seconds ?? 0,
+            progress: data.progress_percent ?? 0,
+            result: data.result ?? 'seed',
+            stopToken: data.stop_token ?? null,
           });
         }
       }
@@ -76,22 +78,11 @@ export default function S09Screen({ route, navigation }) {
     try {
       setLoading(true);
 
-      if (sessionId) {
-        const params = {
-          p_session_id: sessionId,
-        };
-        if (stopInfo.previewId) {
-          params.p_preview_id = stopInfo.previewId;
-        }
-
-        const { error } = await supabase.rpc('confirm_stop_focus', params);
-        if (error) {
-          console.warn('confirm_stop_focus 1차 호출 실패, fallback 시도:', error.message);
-          const retry = await supabase.rpc('confirm_stop_focus', { p_session_id: sessionId });
-          if (retry.error) {
-            console.error('confirm_stop_focus fallback 실패:', retry.error.message);
-          }
-        }
+      if (isServerSession && stopInfo.stopToken) {
+        const { error } = await supabase.rpc('confirm_stop_focus', {
+          p_stop_token: stopInfo.stopToken,
+        });
+        if (error) console.log('씨앗 보관 실패:', error.message);
       }
 
       navigation.reset({
@@ -109,7 +100,13 @@ export default function S09Screen({ route, navigation }) {
     }
   };
 
-  const handleContinueGrowing = () => {
+  const handleContinueGrowing = async () => {
+    // 미리보기 토큰을 취소해야 서버에서 계속 키울 수 있음
+    if (isServerSession && stopInfo.stopToken) {
+      const { error } = await supabase.rpc('cancel_stop_focus', { p_stop_token: stopInfo.stopToken });
+      if (error) console.log('중도 종료 취소 실패:', error.message);
+    }
+
     if (navigation.canGoBack()) {
       navigation.goBack();
     } else {
@@ -124,7 +121,7 @@ export default function S09Screen({ route, navigation }) {
           cameraPos={[0, 5.0, 5.8]}
           modelOffsetY={0.4}
           plotsData={plotsData}
-          selectedPlotIndex={plotIndex ? plotIndex - 1 : null}
+          selectedPlotIndex={plotIndex ?? null}
         />
       </View>
 

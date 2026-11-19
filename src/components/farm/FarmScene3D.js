@@ -19,6 +19,12 @@ const BARN_NODE_NAME = 'farm scene 3d model.004';
 // 창고가 작아서 주변을 조금 넉넉하게 눌러도 인식되도록
 const BARN_HIT_PADDING = 0.1;
 
+// 작물 크기: 밭 한 칸 너비 대비 비율 (새싹 화분 / 자라는 작물)
+const CROP_SEED_RATIO = 0.45;
+const CROP_PLANT_RATIO = 0.7;
+// 테두리 윗면보다 살짝 아래(흙 높이)에 놓기
+const CROP_SINK_RATIO = 0.08;
+
 const CROP_MESH_MAP = {
   '새싹채소_새싹': 'cartoon_vegetables_3d_model001',
   '새싹채소_1': 'plant_seedling_3d_model001',
@@ -369,14 +375,20 @@ function FarmCanvas({
                   cropClone.geometry = centeredGeo;
 
                   const plotCenter = plotCentersRef.current[pIndex];
-                  if (plotCenter && farmModelRef.current) {
-                    const farmScale = farmModelRef.current.scale.x;
+                  if (plotCenter && box) {
+                    // 작물 모델마다 원래 크기가 달라서, 밭 한 칸 크기에 맞춰 키움
+                    const cropSize = new THREE.Vector3();
+                    box.getSize(cropSize);
+                    const footprint = Math.max(cropSize.x, cropSize.z) || 1;
+                    const ratio = stage === 1 ? CROP_SEED_RATIO : CROP_PLANT_RATIO;
+                    cropClone.scale.setScalar((plotCenter.width * ratio) / footprint);
+
+                    // 밭 흙 위에 올림 (밭 위치에는 이미 modelOffsetY가 들어 있음)
                     cropClone.position.set(
                       plotCenter.x,
-                      plotCenter.y + (modelOffsetY || 0) - 2.1,
+                      plotCenter.y - plotCenter.width * CROP_SINK_RATIO,
                       plotCenter.z
                     );
-                    cropClone.scale.multiplyScalar(farmScale * 0.85);
                     nextGroup.add(cropClone);
                   }
                 }
@@ -489,7 +501,10 @@ function FarmCanvas({
           const box = new THREE.Box3().setFromObject(mesh);
           const c = new THREE.Vector3();
           box.getCenter(c);
-          plotCenters[i] = new THREE.Vector3(c.x, box.max.y, c.z);
+          const size = new THREE.Vector3();
+          box.getSize(size);
+          // x, z: 밭 가운데 / y: 밭 테두리 윗면 / width: 밭 한 칸 크기
+          plotCenters[i] = { x: c.x, y: box.max.y, z: c.z, width: Math.min(size.x, size.z) };
         }
       }
       plotCentersRef.current = plotCenters;
@@ -497,6 +512,8 @@ function FarmCanvas({
       await updateCrops();
       if (!mountedRef.current) return;
       isSceneReadyRef.current = true;
+      // 준비하는 동안 plotsData가 바뀌었으면 여기서 반영 (같으면 아무것도 안 함)
+      updateCrops();
 
       const currentSelected = selectedPlotIndexRef.current;
       if (currentSelected !== null && currentSelected !== undefined) {
