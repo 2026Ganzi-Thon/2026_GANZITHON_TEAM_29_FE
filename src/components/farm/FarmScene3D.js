@@ -25,7 +25,8 @@ const CROP_PLANT_RATIO = 0.7;
 // 테두리 윗면보다 살짝 아래(흙 높이)에 놓기
 const CROP_SINK_RATIO = 0.08;
 
-const CROP_MESH_MAP = {
+// 수확 연출(harvestScene.js)에서도 씀
+export const CROP_MESH_MAP = {
   '새싹채소_새싹': 'cartoon_vegetables_3d_model001',
   '새싹채소_1': 'plant_seedling_3d_model001',
   '새싹채소_2': 'plant_seedling_3d_model002',
@@ -153,7 +154,7 @@ async function loadFarmModel() {
 }
 
 let cropsModelPromise = null;
-async function loadCropsModel() {
+export async function loadCropsModel() {
   if (!cropsModelPromise) {
     cropsModelPromise = (async () => {
       const cropAsset = Asset.fromModule(require('../../../assets/models/farms/crops.glb'));

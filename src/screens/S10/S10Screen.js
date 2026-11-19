@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import FarmSheetLayout from '../../components/common/FarmSheetLayout';
@@ -7,6 +7,7 @@ import AppTextInput from '../../components/common/AppTextInput';
 import { COLORS } from '../../styles/colors';
 import { eulReul } from '../../utils/josa';
 import { harvestCrop, harvestErrorMessage, saveHarvestNote, startRest } from '../../lib/harvest';
+import { createHarvestPop } from '../../components/farm/harvestScene';
 
 // S10 수확 완료
 // - S17에서 오면 harvestId를 받음 (이미 수확함)
@@ -19,6 +20,9 @@ export default function S10Screen({ navigation, route }) {
     harvestId: paramHarvestId,
     plotIndex,
   } = route.params ?? {};
+
+  // 수확한 밭에서 작물이 튀어 오르는 연출
+  const harvestPop = useMemo(() => createHarvestPop(plotIndex, cropName), [plotIndex, cropName]);
 
   const [harvestId, setHarvestId] = useState(paramHarvestId ?? null);
   const [minutes, setMinutes] = useState(paramMinutes);
@@ -95,8 +99,7 @@ export default function S10Screen({ navigation, route }) {
   };
 
   return (
-    // TODO: 수확 3D 연출 (작물이 밭에서 튀어 오르며 반짝임, 1.5초)
-    <FarmSheetLayout>
+    <FarmSheetLayout onFarmReady={harvestPop}>
       <Text style={styles.title}>{eulReul(cropName)} 수확했어요!</Text>
       <Text style={styles.subtitle}>{minutes}분 동안 함께 키웠어요</Text>
 
