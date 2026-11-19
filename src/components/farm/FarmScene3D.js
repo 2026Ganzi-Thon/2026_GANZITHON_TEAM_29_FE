@@ -426,6 +426,11 @@ function FarmCanvas({
   const onContextCreate = async (gl) => {
     try {
       isSceneReadyRef.current = false;
+      // 안드로이드는 다른 화면이 위에 올라왔다 내려가면 3D 화면을 새로 만듦
+      // → 이전 장면 기준 기록을 지워야 새 장면에 작물을 다시 그림
+      lastCropsKeyRef.current = null;
+      cropsGroupRef.current = null;
+      pendingGroupRef.current = null;
       const width = gl.drawingBufferWidth;
       const height = gl.drawingBufferHeight;
       if (width === 0 || height === 0) return;
