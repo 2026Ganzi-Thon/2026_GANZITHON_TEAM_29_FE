@@ -5,6 +5,7 @@ import { createNativeStackNavigator } from '@react-navigation/native-stack';
 
 import { supabase } from '../lib/supabase';
 import { getStartScreen } from '../lib/auth';
+import { SettingsProvider } from '../components/settings/SettingsContext';
 
 import S01Screen from '../screens/S01/S01Screen';
 import S02Screen from '../screens/S02/S02Screen';
@@ -67,34 +68,36 @@ export default function AppNavigator() {
   }
 
   return (
-    <NavigationContainer ref={navigationRef}>
-      <Stack.Navigator
-        initialRouteName={startScreen}
-        screenOptions={{
-          headerShown: false,
-        }}
-      >
-        <Stack.Screen name="S01" component={S01Screen} />
-        <Stack.Screen name="S02" component={S02Screen} />
-        <Stack.Screen name="S03" component={S03Screen} />
-        <Stack.Screen name="S04" component={S04Screen} />
-        <Stack.Screen name="S05" component={S05Screen} />
-        <Stack.Screen name="S06" component={S06Screen} />
-        <Stack.Screen name="S07" component={S07Screen} />
-        <Stack.Screen name="S08" component={S08Screen} />
-        <Stack.Screen name="S09" component={S09Screen} />
-        <Stack.Screen name="S10" component={S10Screen} />
-        <Stack.Screen name="S11" component={S11Screen} />
-        <Stack.Screen name="S12" component={S12Screen} />
-        <Stack.Screen name="S13" component={S13Screen} />
-        <Stack.Screen name="S14" component={S14Screen} />
-        <Stack.Screen name="S15" component={S15Screen} />
-        <Stack.Screen name="S16" component={S16Screen} />
-        <Stack.Screen name="S17" component={S17Screen} />
-        <Stack.Screen name="S18" component={S18Screen} />
-        <Stack.Screen name="S19" component={S19Screen} />
-      </Stack.Navigator>
-    </NavigationContainer>
+    <SettingsProvider>
+      <NavigationContainer ref={navigationRef}>
+        <Stack.Navigator
+          initialRouteName={startScreen}
+          screenOptions={{
+            headerShown: false,
+          }}
+        >
+          <Stack.Screen name="S01" component={S01Screen} />
+          <Stack.Screen name="S02" component={S02Screen} />
+          <Stack.Screen name="S03" component={S03Screen} />
+          <Stack.Screen name="S04" component={S04Screen} />
+          <Stack.Screen name="S05" component={S05Screen} />
+          <Stack.Screen name="S06" component={S06Screen} />
+          <Stack.Screen name="S07" component={S07Screen} />
+          <Stack.Screen name="S08" component={S08Screen} />
+          <Stack.Screen name="S09" component={S09Screen} />
+          <Stack.Screen name="S10" component={S10Screen} />
+          <Stack.Screen name="S11" component={S11Screen} />
+          <Stack.Screen name="S12" component={S12Screen} />
+          <Stack.Screen name="S13" component={S13Screen} />
+          <Stack.Screen name="S14" component={S14Screen} />
+          <Stack.Screen name="S15" component={S15Screen} />
+          <Stack.Screen name="S16" component={S16Screen} />
+          <Stack.Screen name="S17" component={S17Screen} />
+          <Stack.Screen name="S18" component={S18Screen} />
+          <Stack.Screen name="S19" component={S19Screen} />
+        </Stack.Navigator>
+      </NavigationContainer>
+    </SettingsProvider>
   );
 }
 

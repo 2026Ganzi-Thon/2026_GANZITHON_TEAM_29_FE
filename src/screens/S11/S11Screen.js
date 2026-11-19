@@ -5,14 +5,9 @@ import FarmSheetLayout from '../../components/common/FarmSheetLayout';
 import AppButton from '../../components/common/AppButton';
 import { COLORS } from '../../styles/colors';
 
+// S11 물 주며 쉬기 (5분)
 
-// - [다시 심기] → 작물 고르는 화면
-// - [농장으로] → S03
-
-const REST_SECONDS = 5 * 60; // 쉬는 시간 5분
-
-// TODO: 작물 고르는 화면 번호 팀원분께 확인하기 (지금은 임시로 S04)
-const CROP_SELECT_SCREEN = 'S04';
+const REST_SECONDS = 5 * 60;
 
 function formatTime(totalSeconds) {
   const minutes = Math.floor(totalSeconds / 60);
@@ -20,10 +15,20 @@ function formatTime(totalSeconds) {
   return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
 }
 
-export default function S11Screen({ navigation }) {
-  const [remaining, setRemaining] = useState(REST_SECONDS);
+// S10에서 start_rest 응답(restEndsAt, serverNow)을 넘겨주면 서버 기준으로 남은 시간 계산
+function initialRemainingMs(params) {
+  if (params?.restEndsAt && params?.serverNow) {
+    return Math.max(0, Date.parse(params.restEndsAt) - Date.parse(params.serverNow));
+  }
+  return REST_SECONDS * 1000;
+}
 
-  const endAtRef = useRef(Date.now() + REST_SECONDS * 1000);
+export default function S11Screen({ navigation, route }) {
+  // 폰 시계가 서버와 달라도 괜찮도록 "지금부터 몇 ms 남았는지"만 가져와서 끝나는 시각을 정함
+  const endAtRef = useRef(Date.now() + initialRemainingMs(route.params));
+  const [remaining, setRemaining] = useState(
+    Math.ceil((endAtRef.current - Date.now()) / 1000)
+  );
 
   useEffect(() => {
     const timer = setInterval(() => {
@@ -40,23 +45,19 @@ export default function S11Screen({ navigation }) {
   }, []);
 
   return (
-    // TODO(3D 2번 파트): 농장 전체에 물을 주는 연출
-    //   → 완성되면 <FarmSheetLayout farmArea={<물주기장면 />}> 형태로 넣기
+    // TODO: 농장 전체에 물 주는 3D 연출
     <FarmSheetLayout>
       <Text style={styles.title}>물 주며 쉬는 중</Text>
       <Text style={styles.timer}>{formatTime(remaining)}</Text>
       <Text style={styles.subtitle}>눈을 감고 숨을 세 번 쉬어 보세요</Text>
 
+      {/* 농장으로 돌아가서 원하는 빈 밭을 직접 골라 심기 */}
       <AppButton
         title="다시 심기"
-        onPress={() => navigation.navigate(CROP_SELECT_SCREEN)}
+        onPress={() => navigation.popTo('S03', { replant: true })}
         style={styles.replantButton}
       />
-      <AppButton
-        title="농장으로"
-        variant="text"
-        onPress={() => navigation.popTo('S03')}
-      />
+      <AppButton title="농장으로" variant="text" onPress={() => navigation.popTo('S03')} />
     </FarmSheetLayout>
   );
 }
@@ -75,7 +76,7 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: COLORS.black,
     textAlign: 'center',
-    fontVariant: ['tabular-nums'], 
+    fontVariant: ['tabular-nums'],
   },
 
   subtitle: {

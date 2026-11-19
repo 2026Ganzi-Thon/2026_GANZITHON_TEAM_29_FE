@@ -15,8 +15,9 @@ import { COLORS } from '../../styles/colors';
  *   <AppButton title="수확하기" onPress={...} />
  *   <AppButton title="나중에" variant="outline" onPress={...} />
  *   <AppButton title="저장" disabled={loading} onPress={...} />  ← 요청 중 중복 누름 방지
+ *   <AppButton title="예" variant="outline" textStyle={{ color: 'red' }} />  ← 글자 색 바꾸기
  */
-export default function AppButton({ title, onPress, variant = 'primary', style, disabled = false }) {
+export default function AppButton({ title, onPress, variant = 'primary', style, textStyle, disabled = false }) {
   return (
     <Pressable
       onPress={onPress}
@@ -29,7 +30,7 @@ export default function AppButton({ title, onPress, variant = 'primary', style, 
         style,
       ]}
     >
-      <Text style={[styles.textBase, styles[`${variant}Text`]]}>{title}</Text>
+      <Text style={[styles.textBase, styles[`${variant}Text`], textStyle]}>{title}</Text>
     </Pressable>
   );
 }

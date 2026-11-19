@@ -1,79 +1,99 @@
-import React, { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import React, { useCallback, useRef, useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { useFocusEffect } from '@react-navigation/native';
 
 import FarmSheetLayout from '../common/FarmSheetLayout';
 import AppButton from '../common/AppButton';
 import DeleteRecordsDialog from './DeleteRecordsDialog';
 import { COLORS } from '../../styles/colors';
 import { formatMinutes } from '../../utils/time';
-import { MOCK_ALL, MOCK_TODAY, MOCK_WEEK } from '../../data/mockRecords';
-import { signOut } from '../../lib/auth';
+import {
+  fetchHistory,
+  monthRows,
+  resetFarmHistory,
+  summarySentence,
+  todayRows,
+  totalMinutes,
+  weekRows,
+} from '../../lib/records';
 
 // S14 오늘 / S15 이번 주 / S15-1 전체
 
 const TABS = [
-  { key: 'today', label: '오늘' },
-  { key: 'week', label: '이번 주' },
-  { key: 'all', label: '전체' },
+  { key: 'today', label: '오늘', summaryLabel: '오늘 키운 시간' },
+  { key: 'week', label: '이번 주', summaryLabel: '이번 주 키운 시간' },
+  { key: 'all', label: '전체', summaryLabel: '총 키운 시간' },
 ];
+
+// 화면 높이 중 농장이 차지하는 비율
+const FARM_HEIGHT_RATIO = 0.42;
 
 const LIGHT_GRAY_TEXT = '#A6A6A6';
 
-function mergeCrops(rows) {
-  const counts = {};
-  rows.forEach((row) => {
-    row.crops.forEach(({ name, count }) => {
-      counts[name] = (counts[name] ?? 0) + count;
-    });
-  });
-  return Object.entries(counts)
-    .map(([name, count]) => ({ name, count }))
-    .sort((a, b) => b.count - a.count);
-}
-
-// 당근 2개, 토마토 1개 외 4개
-function describeCrops(crops) {
-  if (crops.length === 0) return null;
-
-  const top = crops.slice(0, 2).map(({ name, count }) => `${name} ${count}개`);
-  const restCount = crops.slice(2).reduce((sum, { count }) => sum + count, 0);
-
-  return restCount > 0 ? `${top.join(', ')} 외 ${restCount}개` : top.join(', ');
-}
-
-function cropsInline(crops) {
-  return crops.map(({ name, count }) => `${name} ${count}`).join(', ');
-}
-
 export default function RecordView({ navigation, initialTab = 'today' }) {
+  const { height: windowHeight } = useWindowDimensions();
   const [tab, setTab] = useState(initialTab);
-
-  // TODO: 백엔드 연결되면 서버에서 받아온 기록으로 바꾸기
-  const [records, setRecords] = useState({
-    today: MOCK_TODAY,
-    week: MOCK_WEEK,
-    all: MOCK_ALL,
-  });
+  const [history, setHistory] = useState(null);
+  const [weekHistory, setWeekHistory] = useState(null); // 오늘 탭 아래 "이번 주에 ~" 문장용
+  const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState(false);
 
   const [deleteDialogVisible, setDeleteDialogVisible] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState('');
 
-  const deleteAllRecords = () => {
-    // TODO: 서버에서 기록 삭제하는 API 호출
-    setRecords({
-      today: [],
-      week: records.week.map((row) => ({ ...row, minutes: 0, crops: [] })),
-      all: [],
-    });
-    setDeleteDialogVisible(false);
-  };
+  // 탭을 빠르게 바꿀 때 늦게 도착한 이전 응답은 버림
+  const requestIdRef = useRef(0);
 
-  // 로그아웃되면 AppNavigator가 S18로 보내줌
-  const logout = async () => {
+  const load = useCallback(async (period) => {
+    const requestId = ++requestIdRef.current;
+    setLoading(true);
+    setLoadError(false);
+
     try {
-      await signOut();
+      const [main, week] = await Promise.all([
+        fetchHistory(period),
+        period === 'today' ? fetchHistory('week') : Promise.resolve(null),
+      ]);
+      if (requestId !== requestIdRef.current) return;
+
+      setHistory(main);
+      setWeekHistory(period === 'today' ? week : main);
     } catch (e) {
-      console.error('로그아웃 실패:', e);
+      if (requestId !== requestIdRef.current) return;
+      console.error('기록 조회 실패:', e);
+      setLoadError(true);
+    } finally {
+      if (requestId === requestIdRef.current) setLoading(false);
     }
+  }, []);
+
+  // 화면에 들어올 때마다, 탭이 바뀔 때마다 새로 불러오기
+  useFocusEffect(
+    useCallback(() => {
+      load(tab);
+    }, [load, tab])
+  );
+
+  const deleteAllRecords = async () => {
+    if (deleting) return;
+    setDeleting(true);
+    setDeleteError('');
+
+    try {
+      // 되돌릴 수 없는 API라 실패해도 자동으로 다시 부르지 않음
+      await resetFarmHistory();
+    } catch (e) {
+      console.error('기록 삭제 실패:', e);
+      setDeleteError('지우지 못했어요. 잠시 후 다시 시도해 주세요');
+      setDeleting(false);
+      load(tab);
+      return;
+    }
+
+    setDeleting(false);
+    setDeleteDialogVisible(false);
+    navigation.reset({ index: 0, routes: [{ name: 'S02' }] });
   };
 
   const goBack = () => {
@@ -81,35 +101,38 @@ export default function RecordView({ navigation, initialTab = 'today' }) {
     else navigation.navigate('S03');
   };
 
-  let summaryLabel;
-  let totalMinutes;
-  let list;
-  let footer;
+  const currentTab = TABS.find(({ key }) => key === tab);
 
-  const { today, week, all } = records;
+  let list = [];
+  if (history) {
+    if (tab === 'today') list = todayRows(history).map((row) => <TodayRow key={row.key} row={row} />);
+    if (tab === 'week') list = weekRows(history).map((row) => <PeriodRow key={row.key} row={row} />);
+    if (tab === 'all') list = monthRows(history).map((row) => <PeriodRow key={row.key} row={row} wideLabel />);
+  }
 
-  if (tab === 'today') {
-    summaryLabel = '오늘 키운 시간';
-    totalMinutes = today.reduce((sum, item) => sum + item.minutes, 0);
-    list = today.map((item, i) => <TodayRow key={i} item={item} />);
-    const weekText = describeCrops(mergeCrops(week));
-    footer = weekText ? `이번 주에 ${weekText}를 키웠어요` : null;
-  } else if (tab === 'week') {
-    summaryLabel = '이번 주 키운 시간';
-    totalMinutes = week.reduce((sum, row) => sum + row.minutes, 0);
-    list = week.map((row) => <PeriodRow key={row.label} row={row} />);
-    const weekText = describeCrops(mergeCrops(week));
-    footer = weekText ? `이번 주에 ${weekText}를 키웠어요` : null;
+  const footer =
+    tab === 'all'
+      ? summarySentence(history?.items ?? [], '지금까지')
+      : summarySentence(weekHistory?.items ?? [], '이번 주에');
+
+  let listContent;
+  if (loading && !history) {
+    listContent = <Text style={styles.emptyText}>불러오는 중...</Text>;
+  } else if (loadError) {
+    listContent = (
+      <>
+        <Text style={styles.emptyText}>기록을 불러오지 못했어요</Text>
+        <AppButton title="다시 불러오기" variant="text" onPress={() => load(tab)} />
+      </>
+    );
+  } else if (list.length > 0) {
+    listContent = list;
   } else {
-    summaryLabel = '총 키운 시간';
-    totalMinutes = all.reduce((sum, row) => sum + row.minutes, 0);
-    list = all.map((row) => <PeriodRow key={row.label} row={row} wideLabel />);
-    const allText = describeCrops(mergeCrops(all));
-    footer = allText ? `지금까지 ${allText}를 키웠어요` : null;
+    listContent = <Text style={styles.emptyText}>아직 기록이 없어요</Text>;
   }
 
   return (
-    <FarmSheetLayout farmHeight={230}>
+    <FarmSheetLayout farmHeight={Math.round(windowHeight * FARM_HEIGHT_RATIO)}>
       <ScrollView showsVerticalScrollIndicator={false}>
         <Pressable onPress={goBack} hitSlop={12} style={styles.backButton}>
           <Text style={styles.backText}>‹</Text>
@@ -135,15 +158,13 @@ export default function RecordView({ navigation, initialTab = 'today' }) {
         </View>
 
         <View style={styles.summaryCard}>
-          <Text style={styles.summaryLabel}>{summaryLabel}</Text>
-          <Text style={styles.summaryValue}>{formatMinutes(totalMinutes)}</Text>
+          <Text style={styles.summaryLabel}>{currentTab.summaryLabel}</Text>
+          <Text style={styles.summaryValue}>{formatMinutes(totalMinutes(history))}</Text>
         </View>
 
-        <View style={styles.list}>
-          {list.length > 0 ? list : <Text style={styles.emptyText}>아직 기록이 없어요</Text>}
-        </View>
+        <View style={styles.list}>{listContent}</View>
 
-        {footer && (
+        {footer && !loadError && (
           <View style={styles.footerCard}>
             <Text style={styles.footerText}>{footer}</Text>
           </View>
@@ -152,23 +173,25 @@ export default function RecordView({ navigation, initialTab = 'today' }) {
         <AppButton
           title="기록 모두 지우기"
           variant="text"
-          onPress={() => setDeleteDialogVisible(true)}
+          onPress={() => {
+            setDeleteError('');
+            setDeleteDialogVisible(true);
+          }}
         />
-
-        {/* TODO: 로그아웃 버튼 위치는 디자인 확정 후 옮기기 */}
-        <AppButton title="로그아웃" variant="text" onPress={logout} />
       </ScrollView>
 
       <DeleteRecordsDialog
         visible={deleteDialogVisible}
+        loading={deleting}
+        error={deleteError}
         onConfirm={deleteAllRecords}
-        onCancel={() => setDeleteDialogVisible(false)}
+        onCancel={() => !deleting && setDeleteDialogVisible(false)}
       />
     </FarmSheetLayout>
   );
 }
 
-function TodayRow({ item }) {
+function TodayRow({ row }) {
   return (
     <View style={styles.todayRow}>
       {/* TODO: 작물 아이콘 이미지 나오면 교체 */}
@@ -176,23 +199,23 @@ function TodayRow({ item }) {
         <Text style={styles.cropIconText}>작물</Text>
       </View>
       <Text style={styles.todayName}>
-        {item.crop} × {item.count}
+        {row.name} × {row.count}
       </Text>
-      <Text style={styles.todayMinutes}>{formatMinutes(item.minutes)}</Text>
+      {row.minutes !== null && <Text style={styles.todayMinutes}>{formatMinutes(row.minutes)}</Text>}
     </View>
   );
 }
 
 function PeriodRow({ row, wideLabel = false }) {
-  const rested = row.crops.length === 0;
+  const text = row.detail ? `${formatMinutes(row.minutes)} · ${row.detail}` : formatMinutes(row.minutes);
 
   return (
     <View style={styles.periodRow}>
       <Text style={[styles.periodLabel, wideLabel && styles.periodLabelWide]}>
         {row.label}
       </Text>
-      <Text style={[styles.periodText, rested && styles.periodTextRested]}>
-        {rested ? '쉬어간 날' : `${formatMinutes(row.minutes)} · ${cropsInline(row.crops)}`}
+      <Text style={[styles.periodText, row.rested && styles.periodTextRested]}>
+        {row.rested ? '쉬어간 날' : text}
       </Text>
     </View>
   );
@@ -326,7 +349,7 @@ const styles = StyleSheet.create({
   },
 
   periodLabelWide: {
-    width: 48,
+    width: 64, // "2025년 11월"처럼 길어질 수 있어서
   },
 
   periodText: {

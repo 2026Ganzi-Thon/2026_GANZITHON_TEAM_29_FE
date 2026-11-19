@@ -1,5 +1,5 @@
 import React, { useEffect, useRef } from 'react';
-import { View, StyleSheet } from 'react-native';
+import { Pressable, View, StyleSheet } from 'react-native';
 import { useIsFocused } from '@react-navigation/native';
 import { GLView } from 'expo-gl';
 import { Renderer, THREE, TextureLoader } from 'expo-three';
@@ -9,7 +9,15 @@ import { File } from 'expo-file-system';
 import { encode } from 'base64-arraybuffer';
 import { GLTFLoader } from 'three-stdlib';
 
+import { useSettings } from '../settings/SettingsContext';
+
 global.THREE = global.THREE || THREE;
+
+// 농장 모델 안의 창고 오브젝트. 누르면 설정 창이 열림
+// (GLB를 불러올 때 이름의 공백·점이 바뀌므로 sanitizeNodeName으로 맞춰서 찾음)
+const BARN_NODE_NAME = 'farm scene 3d model.004';
+// 창고가 작아서 주변을 조금 넉넉하게 눌러도 인식되도록
+const BARN_HIT_PADDING = 0.1;
 
 // iOS는 fetch로 읽히고, 안드로이드는 fetch로 file://을 못 읽는 경우가 있어서 File로 한 번 더 시도
 async function readLocalFile(uri) {
@@ -130,9 +138,16 @@ function loadFarmModel() {
 // - backgroundColor: 배경색 (예: 0xacd066)
 // - visibleWidth: 화면 가로에 보일 농장 폭. 작을수록 확대 (안 넘기면 기존 구도)
 // - cameraAngle: visibleWidth를 쓸 때 내려다보는 각도
-export default function FarmScene3D({ backgroundColor = 0xf5f1e8, visibleWidth, cameraAngle = 50 }) {
-  // 뒤에 쌓인 화면은 그리기만 멈추고, 돌아오면 바로 다시 그림
+// - onPressBackground: 창고가 아닌 곳을 눌렀을 때 실행
+export default function FarmScene3D({
+  backgroundColor = 0xf5f1e8,
+  visibleWidth,
+  cameraAngle = 50,
+  onPressBackground,
+}) {
+  // 스택에 쌓인 뒤쪽 화면은 3D를 내려서 메모리를 아낌
   const isFocused = useIsFocused();
+  const settings = useSettings();
 
   return (
     <View
@@ -141,30 +156,25 @@ export default function FarmScene3D({ backgroundColor = 0xf5f1e8, visibleWidth, 
         { backgroundColor: `#${backgroundColor.toString(16).padStart(6, '0')}` },
       ]}
     >
-      <FarmCanvas
-        backgroundColor={backgroundColor}
-        visibleWidth={visibleWidth}
-        cameraAngle={cameraAngle}
-        active={isFocused}
-      />
+      {isFocused && (
+        <FarmCanvas
+          backgroundColor={backgroundColor}
+          visibleWidth={visibleWidth}
+          cameraAngle={cameraAngle}
+          onPressBarn={settings.canOpen ? settings.open : null}
+          onPressBackground={onPressBackground}
+        />
+      )}
     </View>
   );
 }
 
-function FarmCanvas({ backgroundColor, visibleWidth, cameraAngle, active }) {
+function FarmCanvas({ backgroundColor, visibleWidth, cameraAngle, onPressBarn, onPressBackground }) {
   const animationRef = useRef(null);
   const rendererRef = useRef(null);
-  const renderRef = useRef(null);
   const mountedRef = useRef(true);
-  const activeRef = useRef(active);
-
-  useEffect(() => {
-    activeRef.current = active;
-
-    if (active && animationRef.current === null && renderRef.current) {
-      renderRef.current();
-    }
-  }, [active]);
+  const sizeRef = useRef({ width: 0, height: 0 });
+  const hitRef = useRef(null); // { camera, barnBox }
 
   useEffect(() => {
     mountedRef.current = true;
@@ -232,13 +242,23 @@ function FarmCanvas({ backgroundColor, visibleWidth, cameraAngle, active }) {
       if (!mountedRef.current) return;
 
       // geometry, material, texture는 원본과 공유됨
-      scene.add(farmModel.clone());
+      const farm = farmModel.clone();
+      scene.add(farm);
+      farm.updateMatrixWorld(true);
+
+      const barn =
+        farm.getObjectByName(THREE.PropertyBinding.sanitizeNodeName(BARN_NODE_NAME)) ??
+        farm.getObjectByName(BARN_NODE_NAME);
+
+      if (!barn) console.log('창고 오브젝트를 찾지 못했어요:', BARN_NODE_NAME);
+
+      hitRef.current = {
+        camera,
+        barnBox: barn ? new THREE.Box3().setFromObject(barn).expandByScalar(BARN_HIT_PADDING) : null,
+      };
 
       const render = () => {
-        if (!mountedRef.current || !activeRef.current) {
-          animationRef.current = null;
-          return;
-        }
+        if (!mountedRef.current) return;
 
         animationRef.current = requestAnimationFrame(render);
 
@@ -246,14 +266,43 @@ function FarmCanvas({ backgroundColor, visibleWidth, cameraAngle, active }) {
         gl.endFrameEXP();
       };
 
-      renderRef.current = render;
       render();
     } catch (error) {
       console.error('농장 3D 모델 로딩 실패:', error);
     }
   };
 
-  return <GLView style={styles.glView} onContextCreate={onContextCreate} />;
+  // 누른 위치에서 3D 공간으로 선을 쏴서 창고에 닿는지 확인
+  const handlePress = (event) => {
+    const { locationX, locationY } = event.nativeEvent;
+    const { width, height } = sizeRef.current;
+    const hit = hitRef.current;
+
+    if (onPressBarn && hit?.barnBox && width > 0 && height > 0) {
+      const pointer = new THREE.Vector2((locationX / width) * 2 - 1, -(locationY / height) * 2 + 1);
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera(pointer, hit.camera);
+
+      if (raycaster.ray.intersectsBox(hit.barnBox)) {
+        onPressBarn();
+        return;
+      }
+    }
+
+    onPressBackground?.();
+  };
+
+  return (
+    <Pressable
+      style={styles.glView}
+      onPress={handlePress}
+      onLayout={(event) => {
+        sizeRef.current = event.nativeEvent.layout;
+      }}
+    >
+      <GLView style={StyleSheet.absoluteFill} onContextCreate={onContextCreate} />
+    </Pressable>
+  );
 }
 
 const styles = StyleSheet.create({
