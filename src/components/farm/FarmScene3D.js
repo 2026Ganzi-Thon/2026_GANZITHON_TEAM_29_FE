@@ -23,8 +23,11 @@ const BARN_HIT_PADDING = 0.1;
 const CROP_SEED_RATIO = 0.45;
 const CROP_PLANT_RATIO = 0.7;
 // 테두리 윗면보다 살짝 아래(흙 높이)에 놓기
-const CROP_SINK_RATIO = 0.17;
+const CROP_SINK_RATIO = 0.18;
 const CROP_SEED_SINK_RATIO = 0.285;
+
+// 밭 한 칸 터치 인식 반경 배율 (1.0 = 칸 크기 기준, 살짝 넉넉하게 1.15)
+const PLOT_TOUCH_RADIUS_RATIO = 1.15;
 
 const CROP_MESH_MAP = {
   '새싹채소_새싹': 'cartoon_vegetables_3d_model001',
@@ -224,6 +227,7 @@ export default function FarmScene3D({
   selectedPlotIndex,
   onSelectPlot,
   onPressBackground,
+  blurred = false,
 }) {
   const isFocused = useIsFocused();
   const settings = useSettings();
@@ -242,6 +246,7 @@ export default function FarmScene3D({
         onPressBarn={settings.canOpen ? settings.open : null}
         onPressBackground={onPressBackground}
         active={isFocused}
+        blurred={blurred}
       />
     </View>
   );
@@ -259,6 +264,7 @@ function FarmCanvas({
   onPressBarn,
   onPressBackground,
   active,
+  blurred = false,
 }) {
   const animationRef = useRef(null);
   const rendererRef = useRef(null);
@@ -274,6 +280,7 @@ function FarmCanvas({
   const lastCropsKeyRef = useRef(null);
   const plotMeshesRef = useRef([]);
   const borderMeshesRef = useRef([]);
+  const hitMeshesRef = useRef([]);
   const plotCentersRef = useRef([]);
   const layoutRef = useRef({ width: 0, height: 0 });
   const touchStartRef = useRef(null);
@@ -346,7 +353,6 @@ function FarmCanvas({
     try {
       if (!sceneRef.current || !farmModelRef.current || !mountedRef.current) return;
 
-      // 타이머 때문에 plotsData가 매초 새로 들어와도, 작물·단계가 그대로면 다시 만들지 않음
       const cropsKey = (plotsDataRef.current || [])
         .map((plot) => {
           const pIndex = plot.plotIndex !== undefined ? plot.plotIndex : plot.id;
@@ -383,14 +389,12 @@ function FarmCanvas({
                   const plotCenter = plotCentersRef.current[pIndex];
                   if (!box || !plotCenter) return;
 
-                  // 작물 모델마다 원래 크기가 달라서, 밭 한 칸 크기에 맞춰 키움
                   const cropSize = new THREE.Vector3();
                   box.getSize(cropSize);
                   const footprint = Math.max(cropSize.x, cropSize.z) || 1;
                   const ratio = stage === 1 ? CROP_SEED_RATIO : CROP_PLANT_RATIO;
                   const sinkRatio = stage === 1 ? CROP_SEED_SINK_RATIO : CROP_SINK_RATIO;
 
-                  // 밭 흙 위에 올림 (밭 위치에는 이미 modelOffsetY가 들어 있음)
                   const pivot = new THREE.Group();
                   pivot.position.set(
                     plotCenter.x,
@@ -399,7 +403,6 @@ function FarmCanvas({
                   );
                   pivot.scale.setScalar((plotCenter.width * ratio) / footprint);
 
-                  // geometry는 원본과 공유 (복사하지 않아서 지울 필요 없음)
                   const meshNode = new THREE.Mesh(child.geometry, child.material);
                   const center = new THREE.Vector3();
                   box.getCenter(center);
@@ -417,7 +420,6 @@ function FarmCanvas({
       if (!mountedRef.current || !sceneRef.current) return;
 
       lastCropsKeyRef.current = cropsKey;
-      // 실제 교체는 렌더 루프에서 (그리는 도중에 장면이 바뀌지 않게)
       pendingGroupRef.current = nextGroup;
     } catch (err) {
       console.log('❌ updateCrops 에러:', err?.message);
@@ -433,11 +435,10 @@ function FarmCanvas({
   const onContextCreate = async (gl) => {
     try {
       isSceneReadyRef.current = false;
-      // 안드로이드는 다른 화면이 위에 올라왔다 내려가면 3D 화면을 새로 만듦
-      // → 이전 장면 기준 기록을 지워야 새 장면에 작물을 다시 그림
       lastCropsKeyRef.current = null;
       cropsGroupRef.current = null;
       pendingGroupRef.current = null;
+      hitMeshesRef.current = [];
       const width = gl.drawingBufferWidth;
       const height = gl.drawingBufferHeight;
       if (width === 0 || height === 0) return;
@@ -493,7 +494,7 @@ function FarmCanvas({
         ? new THREE.Box3().setFromObject(barn).expandByScalar(BARN_HIT_PADDING)
         : null;
 
-      // 밭(plot_0~11): 작물 위치·크기·터치 기준 / 테두리(border_0~11): 선택 하이라이트 기준
+      // 밭(plot_0~11): 작물 위치·크기 기준 / 테두리(border_0~11): 선택 하이라이트 기준
       const plotMeshes = [];
       const borderMeshes = [];
       clonedFarm.traverse((child) => {
@@ -517,20 +518,56 @@ function FarmCanvas({
       borderMeshesRef.current = borderMeshes;
 
       const plotCenters = [];
+      const hitMeshes = [];
+      const hitMat = new THREE.MeshBasicMaterial({
+        transparent: true,
+        opacity: 0,
+        depthWrite: false,
+      });
+
       for (let i = 0; i < 12; i++) {
-        const mesh = plotMeshes.find((m) => m.userData.plotIndex === i);
-        if (mesh) {
-          mesh.updateMatrixWorld(true);
-          const box = new THREE.Box3().setFromObject(mesh);
-          const c = new THREE.Vector3();
-          box.getCenter(c);
-          const size = new THREE.Vector3();
-          box.getSize(size);
-          // x, z: 밭 가운데 / y: 밭 윗면 / width: 밭 한 칸 크기
-          plotCenters[i] = { x: c.x, y: box.max.y, z: c.z, width: Math.min(size.x, size.z) };
+        const pMesh = plotMeshes.find((m) => m.userData.plotIndex === i);
+        const bMesh = borderMeshes.find((m) => m.userData.plotIndex === i);
+        if (!pMesh && !bMesh) continue;
+
+        const combinedBox = new THREE.Box3();
+        if (pMesh) {
+          pMesh.updateMatrixWorld(true);
+          combinedBox.union(new THREE.Box3().setFromObject(pMesh));
         }
+        if (bMesh) {
+          bMesh.updateMatrixWorld(true);
+          combinedBox.union(new THREE.Box3().setFromObject(bMesh));
+        }
+
+        const c = new THREE.Vector3();
+        const size = new THREE.Vector3();
+        combinedBox.getCenter(c);
+        combinedBox.getSize(size);
+
+        const cellWidth = Math.max(size.x, size.z, 0.4);
+        plotCenters[i] = {
+          x: c.x,
+          y: combinedBox.max.y,
+          z: c.z,
+          width: Math.min(size.x, size.z) || cellWidth,
+          touchRadius: (cellWidth * 0.5) * PLOT_TOUCH_RADIUS_RATIO,
+        };
+
+        // 테두리 + 안쪽 밭 전체를 덮는 히트 박스 (어디를 눌러도 같은 칸으로 인식)
+        const boxW = Math.max(size.x, 0.4);
+        const boxD = Math.max(size.z, 0.4);
+        const boxH = Math.max(size.y, 0.25);
+        const hitGeo = new THREE.BoxGeometry(boxW, boxH, boxD);
+        const hitMesh = new THREE.Mesh(hitGeo, hitMat);
+        hitMesh.position.set(c.x, c.y, c.z);
+        hitMesh.userData = { plotIndex: i };
+        scene.add(hitMesh);
+        hitMeshes.push(hitMesh);
       }
+
       plotCentersRef.current = plotCenters;
+      hitMeshesRef.current = hitMeshes;
 
       await updateCrops();
       if (!mountedRef.current) return;
@@ -541,7 +578,6 @@ function FarmCanvas({
         scene.add(nextGroup);
       }
       isSceneReadyRef.current = true;
-      // 준비하는 동안 plotsData가 바뀌었으면 여기서 반영 (같으면 아무것도 안 함)
       updateCrops();
 
       const currentSelected = selectedPlotIndexRef.current;
@@ -587,7 +623,7 @@ function FarmCanvas({
 
   return (
     <View
-      style={styles.glView}
+      style={[styles.glView, blurred && styles.blurredView]}
       onLayout={(e) => { layoutRef.current = e.nativeEvent.layout; }}
       onStartShouldSetResponder={() => !!(onSelectPlot || onPressBarn || onPressBackground)}
       onResponderGrant={(e) => {
@@ -597,8 +633,8 @@ function FarmCanvas({
         if (!touchStartRef.current) return;
         const { locationX, locationY } = e.nativeEvent;
         const camera = cameraRef.current;
-        const plotMeshes = plotMeshesRef.current;
-        const borderMeshes = borderMeshesRef.current;
+        const hitMeshes = hitMeshesRef.current;
+        const plotCenters = plotCentersRef.current;
         const { width, height } = layoutRef.current;
 
         if (!camera || !width || !height) {
@@ -610,20 +646,48 @@ function FarmCanvas({
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(mouse, camera);
 
-        // 창고 → 밭/테두리 → 나머지 순서로 확인
+        // 창고 → 밭(중앙/테두리 통합 히트박스 및 평면 최근접 판정) → 배경 순서
         if (onPressBarn && barnBoxRef.current && raycaster.ray.intersectsBox(barnBoxRef.current)) {
           onPressBarn();
           return;
         }
 
-        const selectableMeshes = [...plotMeshes, ...borderMeshes];
-        if (onSelectPlotRef.current && selectableMeshes.length > 0) {
-          const hits = raycaster.intersectObjects(selectableMeshes, true);
-          if (hits.length > 0) {
-            const pIdx = hits[0].object.userData?.plotIndex ?? hits[0].object.parent?.userData?.plotIndex;
-            if (pIdx !== undefined) {
-              onSelectPlotRef.current(pIdx);
-              return;
+        if (onSelectPlotRef.current) {
+          if (hitMeshes.length > 0) {
+            const hits = raycaster.intersectObjects(hitMeshes, false);
+            if (hits.length > 0) {
+              const pIdx = hits[0].object.userData?.plotIndex;
+              if (typeof pIdx === 'number') {
+                onSelectPlotRef.current(pIdx);
+                return;
+              }
+            }
+          }
+
+          // 히트박스 경계에 살짝 빗나가더라도 밭 평면 기준 가장 가까운 칸 선택
+          const validCenters = plotCenters.filter(Boolean);
+          if (validCenters.length > 0) {
+            const avgY = validCenters.reduce((acc, item) => acc + item.y, 0) / validCenters.length;
+            const groundPlane = new THREE.Plane(new THREE.Vector3(0, 1, 0), -avgY);
+            const hitPoint = new THREE.Vector3();
+            if (raycaster.ray.intersectPlane(groundPlane, hitPoint)) {
+              let bestIdx = -1;
+              let bestDistSq = Infinity;
+              plotCenters.forEach((center, idx) => {
+                if (!center) return;
+                const dx = hitPoint.x - center.x;
+                const dz = hitPoint.z - center.z;
+                const distSq = dx * dx + dz * dz;
+                const radius = center.touchRadius || 0.45;
+                if (distSq <= radius * radius && distSq < bestDistSq) {
+                  bestDistSq = distSq;
+                  bestIdx = idx;
+                }
+              });
+              if (bestIdx !== -1) {
+                onSelectPlotRef.current(bestIdx);
+                return;
+              }
             }
           }
         }
@@ -639,4 +703,5 @@ function FarmCanvas({
 const styles = StyleSheet.create({
   container: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%', backgroundColor: '#F5F1E8' },
   glView: { width: '100%', height: '100%' },
+  blurredView: { filter: 'blur(8px)' },
 });

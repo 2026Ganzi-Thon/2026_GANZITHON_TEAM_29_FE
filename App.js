@@ -5,6 +5,8 @@ import { SafeAreaProvider } from 'react-native-safe-area-context';
 import AppNavigator from './src/navigation/AppNavigator';
 import { supabase } from './src/utils/supabase';
 
+const NON_ACTIVE_STATUSES = ['paused', 'completed', 'harvested', 'finished', 'cancelled'];
+
 export default function App() {
   const navigationRef = useRef(null);
   const isCheckingRef = useRef(false);
@@ -23,8 +25,15 @@ export default function App() {
       const activeSession = data?.session ?? data ?? null;
       if (!activeSession) return;
 
-      // 사용자가 의도적으로 일시정지한 세션(paused)은 S06으로 강제 이동하지 않음
-      if (activeSession.status === 'paused') return;
+      const status = String(activeSession.status || '').toLowerCase();
+      // 일시정지(paused) 및 이미 끝난 세션은 S06으로 강제 이동하지 않음
+      if (NON_ACTIVE_STATUSES.includes(status)) return;
+
+      const remaining =
+        activeSession.remaining_seconds !== undefined && activeSession.remaining_seconds !== null
+          ? Number(activeSession.remaining_seconds)
+          : null;
+      if (remaining !== null && remaining <= 0) return;
 
       const currentRouteName = nav.getCurrentRoute()?.name;
       if (currentRouteName === 'S06') return;
