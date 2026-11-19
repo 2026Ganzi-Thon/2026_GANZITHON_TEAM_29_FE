@@ -80,8 +80,11 @@ export default function S10Screen({ navigation, route }) {
     if (loading) return;
     const note = memo.trim();
 
+    // 농장으로 돌아가면 수확한 밭이 1초 반짝임
+    const farmParams = { justHarvested: true, flashPlotIndex: plotIndex, flashKey: Date.now() };
+
     if (!note || !harvestId) {
-      navigation.popTo('S03', { justHarvested: true });
+      navigation.popTo('S03', farmParams);
       return;
     }
 
@@ -90,7 +93,7 @@ export default function S10Screen({ navigation, route }) {
     try {
       // guidance_required(저장 안 됨)여도 S13 없이 농장으로 감
       await saveHarvestNote(harvestId, note);
-      navigation.popTo('S03', { justHarvested: true });
+      navigation.popTo('S03', farmParams);
     } catch (e) {
       setError(harvestErrorMessage(e));
     } finally {

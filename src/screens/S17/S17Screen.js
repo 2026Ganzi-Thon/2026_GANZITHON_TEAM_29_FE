@@ -1,15 +1,19 @@
-import React, { useState } from 'react';
-import { StyleSheet, Text, View } from 'react-native';
+import React, { useMemo, useState } from 'react';
+import { StyleSheet, Text } from 'react-native';
 
 import FarmSheetLayout from '../../components/common/FarmSheetLayout';
 import AppButton from '../../components/common/AppButton';
 import { COLORS } from '../../styles/colors';
 import { iGa } from '../../utils/josa';
 import { harvestCrop, harvestErrorMessage } from '../../lib/harvest';
+import { createRipeShowcase } from '../../components/farm/ripeScene';
 
 // S17 수확 확인 창 (S03에서 다 자란 밭을 누르면 열림)
 export default function S17Screen({ navigation, route }) {
   const { cropName = '당근', minutes = 20, sessionId, plotIndex } = route.params ?? {};
+
+  // 농장에서 다 자란 밭을 강조하고 작물을 보여줌
+  const ripeShowcase = useMemo(() => createRipeShowcase(plotIndex, cropName), [plotIndex, cropName]);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -46,14 +50,8 @@ export default function S17Screen({ navigation, route }) {
   };
 
   return (
-    // TODO: 다 자란 밭 3D 렌더
-    <FarmSheetLayout onPressOutside={close}>
+    <FarmSheetLayout onPressOutside={close} onFarmReady={ripeShowcase}>
       <Text style={styles.title}>{iGa(cropName)} 다 자랐어요</Text>
-
-      {/* TODO: 작물 이미지 나오면 교체 */}
-      <View style={styles.cropImage}>
-        <Text style={styles.cropImageText}>다 자란 {cropName}</Text>
-      </View>
 
       <Text style={styles.message}>
         {`${minutes}분 동안 함께 키웠어요.\n지금 수확할까요?`}
@@ -79,22 +77,6 @@ const styles = StyleSheet.create({
     fontWeight: '800',
     color: COLORS.black,
     textAlign: 'center',
-  },
-
-  cropImage: {
-    alignSelf: 'center',
-    width: 120,
-    height: 120,
-    marginTop: 16,
-    alignItems: 'center',
-    justifyContent: 'center',
-    borderRadius: 12,
-    backgroundColor: '#E6E6E6',
-  },
-
-  cropImageText: {
-    fontSize: 12,
-    color: COLORS.graytext,
   },
 
   message: {

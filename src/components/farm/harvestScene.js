@@ -23,8 +23,8 @@ function easeOutBack(t) {
   return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
 }
 
-// 다 자란 모습(_3)을 먼저 찾고, 모델이 없으면 그 전 단계로 대신함
-function findCropMesh(cropsScene, cropName) {
+// 다 자란 모습(_3)을 먼저 찾고, 모델이 없으면 그 전 단계로 대신함 (S17 ripeScene.js에서도 씀)
+export function findGrownCropMesh(cropsScene, cropName) {
   for (const stage of ['3', '2', '1']) {
     const meshName = CROP_MESH_MAP[`${cropName}_${stage}`];
     if (!meshName) continue;
@@ -59,7 +59,7 @@ function startHarvestPop({ scene, plotCenters, addFrameCallback }, plotIndex, cr
     .then((cropsScene) => {
       if (disposed) return;
 
-      const source = findCropMesh(cropsScene, cropName);
+      const source = findGrownCropMesh(cropsScene, cropName);
       if (!source) {
         console.log('수확 연출: 작물 모델을 찾지 못했어요:', cropName);
         return;

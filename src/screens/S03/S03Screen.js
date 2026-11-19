@@ -19,7 +19,7 @@ import FarmScene3D from '../../components/farm/FarmScene3D';
 import TopHeaderCard from '../../components/common/TopHeaderCard';
 import BottomNoticeToast from '../../components/common/BottomNoticeToast';
 
-export default function S03Screen({ navigation }) {
+export default function S03Screen({ navigation, route }) {
   const [currentTime, setCurrentTime] = useState('');
   const [selectedPlot, setSelectedPlot] = useState(null); // 0~11 인덱스
   const [plotsData, setPlotsData] = useState([]);
@@ -191,6 +191,8 @@ export default function S03Screen({ navigation }) {
           plotsData={plotsData}
           selectedPlotIndex={selectedPlot}
           onSelectPlot={handleSelectPlot}
+          flashPlotIndex={route?.params?.flashPlotIndex}
+          flashKey={route?.params?.flashKey}
         />
       </View>
 
