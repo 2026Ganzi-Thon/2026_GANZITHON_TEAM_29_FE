@@ -1,4 +1,5 @@
-﻿import React, { useState, useEffect } from 'react';
+﻿import React, { useCallback, useEffect, useState } from 'react';
+import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
   Text,
@@ -12,6 +13,7 @@ import { COLORS } from '../../styles/colors';
 import { FONTS } from '../../styles/fonts';
 import { commonStyles } from '../../styles/commonStyles';
 import { supabase } from '../../utils/supabase';
+import { fetchHistory } from '../../lib/records';
 
 import FarmScene3D from '../../components/farm/FarmScene3D';
 import TopHeaderCard from '../../components/common/TopHeaderCard';
@@ -42,9 +44,23 @@ export default function S03Screen({ navigation }) {
     return () => clearInterval(interval);
   }, []);
 
+  const DEFAULT_NOTICE = '빈 밭을 눌러 씨앗을 심어요';
+  const [notice, setNotice] = useState(DEFAULT_NOTICE);
+
+  // 다른 화면에서 돌아올 때마다 농장 상태를 다시 불러옴
+  useFocusEffect(
+    useCallback(() => {
+      setSelectedPlot(null);
+      setNotice(DEFAULT_NOTICE);
+      fetchMyFarmData();
+    }, [])
+  );
+
   useEffect(() => {
-    fetchMyFarmData();
-  }, []);
+    if (notice === DEFAULT_NOTICE) return;
+    const timer = setTimeout(() => setNotice(DEFAULT_NOTICE), 2000);
+    return () => clearTimeout(timer);
+  }, [notice]);
 
   const fetchMyFarmData = async () => {
     try {
@@ -55,9 +71,9 @@ export default function S03Screen({ navigation }) {
       const farmList = error ? [] : (data || []);
 
       const formattedPlots = Array.from({ length: 12 }, (_, index) => {
-        // 블렌더 및 내부 인덱스와 동일하게 0 ~ 11 인덱스로 밭 데이터 구성
-        const plotIndex = index; 
-        const serverPlot = farmList.find(item => item.plot_index === plotIndex || item.plot_index === plotIndex + 1);
+        // 앱은 0 ~ 11, 서버 plot_index는 1 ~ 12
+        const plotIndex = index;
+        const serverPlot = farmList.find(item => item.plot_index === plotIndex + 1);
 
         return {
           id: plotIndex,
@@ -72,28 +88,22 @@ export default function S03Screen({ navigation }) {
           harvestId: serverPlot?.harvest_id || null,
           isAutoHarvest: serverPlot?.is_auto_harvest || false,
           focusedSeconds: serverPlot?.focused_seconds || 0,
-          stage: serverPlot?.stage || (serverPlot?.farm_status === 'growing' ? 1 : 0),
+          stage: serverPlot?.farm_status === 'ripe' ? 5 : 1,
         };
       });
 
       setPlotsData(formattedPlots);
 
-      let calculatedSeconds = 0;
-      let calculatedHarvests = 0;
-
-      farmList.forEach(item => {
-        if (item.focused_seconds) {
-          calculatedSeconds += item.focused_seconds;
-        }
-        if (item.farm_status === 'harvested' || item.harvest_id || item.status === 'harvested') {
-          calculatedHarvests += 1;
-        }
-      });
-
-      setTodayStats({
-        totalSeconds: calculatedSeconds,
-        harvestCount: calculatedHarvests,
-      });
+      // 오늘 키운 시간·수확 수는 기록 API에서 가져옴 (get_my_farm에는 없음)
+      try {
+        const today = await fetchHistory('today');
+        setTodayStats({
+          totalSeconds: today?.summary?.focused_seconds || 0,
+          harvestCount: today?.summary?.harvest_count || 0,
+        });
+      } catch (e) {
+        console.log('오늘 기록 조회 실패:', e?.code);
+      }
 
       const unacknowledgedHarvestIds = farmList
         ?.filter(item => item.is_auto_harvest && !item.acknowledged && item.harvest_id)
@@ -124,33 +134,44 @@ export default function S03Screen({ navigation }) {
     setSelectedPlot(plotIndex);
 
     const targetPlot = plotsData.find(p => p.plotIndex === plotIndex);
+    const growingPlot = plotsData.find(p => p.farmStatus === 'growing');
+
+    // 서버는 한 번에 한 작물만 키울 수 있음
+    if ((!targetPlot || targetPlot.farmStatus === 'empty') && growingPlot) {
+      setSelectedPlot(null);
+      setNotice('한 번에 하나만 키울 수 있어요');
+      return;
+    }
 
     if (!targetPlot || targetPlot.farmStatus === 'empty') {
       setTimeout(() => {
         navigation.navigate('S04', { plotIndex: plotIndex });
       }, 150); 
-    } else if (targetPlot.farmStatus === 'ready' || targetPlot.harvestId || targetPlot.farmStatus === 'harvested') {
+    } else if (targetPlot.farmStatus === 'ripe') {
       setTimeout(() => {
         navigation.navigate('S17', {
           cropName: targetPlot.cropName || '작물',
           minutes: Math.round((targetPlot.targetSeconds || 1200) / 60),
           plotIndex: plotIndex,
+          sessionId: targetPlot.sessionId,
         });
       }, 150);
-    } else if (targetPlot.farmStatus === 'focusing') {
+    } else if (targetPlot.sessionStatus === 'paused') {
+      setTimeout(() => {
+        navigation.navigate('S07', {
+          plotIndex: plotIndex,
+          sessionId: targetPlot.sessionId,
+          cropId: targetPlot.cropId,
+          cropName: targetPlot.cropName,
+        });
+      }, 150);
+    } else if (targetPlot.farmStatus === 'growing') {
       setTimeout(() => {
         navigation.navigate('S06', {
           plotIndex: plotIndex,
           cropId: targetPlot.cropId,
           sessionId: targetPlot.sessionId,
           cropName: targetPlot.cropName,
-        });
-      }, 150);
-    } else if (targetPlot.farmStatus === 'paused') {
-      setTimeout(() => {
-        navigation.navigate('S07', {
-          plotIndex: plotIndex,
-          sessionId: targetPlot.sessionId,
         });
       }, 150);
     }
@@ -201,7 +222,7 @@ export default function S03Screen({ navigation }) {
         <View style={styles.middleSpacer} pointerEvents="none" />
 
         <BottomNoticeToast 
-          message="빈 밭을 눌러 씨앗을 심어요" 
+          message={notice} 
           style={styles.toastStyle} 
           onPress={() => {
             const firstEmpty = plotsData.find(p => p.farmStatus === 'empty');

@@ -15,12 +15,13 @@ import { supabase } from '../../utils/supabase';
 import FarmScene3D from '../../components/farm/FarmScene3D';
 
 export default function S07Screen({ route, navigation }) {
-  const { sessionId, plotIndex = 0 } = route.params || {};
+  const { sessionId, plotIndex = 0, cropId, cropName } = route.params || {};
+  const isServerSession = !!sessionId && !String(sessionId).startsWith('local_');
 
   const [loading, setLoading] = useState(false);
   const [remainingSeconds, setRemainingSeconds] = useState(route.params?.remainingSeconds || 0);
   const [plotsData, setPlotsData] = useState([]);
-  const [currentCropName, setCurrentCropName] = useState('작물');
+  const [currentCropName, setCurrentCropName] = useState(cropName || '작물');
 
   useEffect(() => {
     fetchFarmState();
@@ -32,23 +33,31 @@ export default function S07Screen({ route, navigation }) {
       
       // 💡 0 ~ 11 인덱스로 일치시켜 튕김 현상 방지
       const formattedPlots = Array.from({ length: 12 }, (_, index) => {
-        const serverPlot = farmData?.find(item => item.plot_index === index);
+        const serverPlot = farmData?.find(item => item.plot_index === index + 1);
         return {
           id: index,
           plotIndex: index,
           plotId: serverPlot?.plot_id || null,
           farmStatus: index === plotIndex ? 'paused' : (serverPlot?.farm_status || 'empty'),
-          cropName: serverPlot?.crop_name || null,
-          stage: serverPlot?.stage || 1,
+          cropName: index === plotIndex ? (serverPlot?.crop_name || cropName || null) : (serverPlot?.crop_name || null),
+          stage: serverPlot?.farm_status === 'ripe' ? 5 : 1,
         };
       });
 
       setPlotsData(formattedPlots);
 
       if (plotIndex !== undefined) {
-        const targetPlot = farmData?.find(item => item.plot_index === plotIndex);
+        const targetPlot = farmData?.find(item => item.plot_index === plotIndex + 1);
         if (targetPlot && targetPlot.crop_name) {
           setCurrentCropName(targetPlot.crop_name);
+        }
+      }
+
+      // S03에서 바로 들어오면 남은 시간을 모르니 서버에서 가져옴
+      if (route.params?.remainingSeconds === undefined && isServerSession) {
+        const { data } = await supabase.rpc('get_active_focus');
+        if (data?.session?.remaining_seconds !== undefined) {
+          setRemainingSeconds(data.session.remaining_seconds);
         }
       }
     } catch (error) {
@@ -63,8 +72,10 @@ export default function S07Screen({ route, navigation }) {
   };
 
   const handleResumeFocus = async () => {
-    if (!sessionId) {
-      navigation.goBack();
+    const resumeParams = { plotIndex, sessionId, cropId, cropName: currentCropName };
+
+    if (!isServerSession) {
+      navigation.replace('S06', resumeParams);
       return;
     }
 
@@ -76,7 +87,7 @@ export default function S07Screen({ route, navigation }) {
 
       if (error) throw error;
 
-      navigation.replace('S06', { plotIndex, sessionId });
+      navigation.replace('S06', resumeParams);
     } catch (error) {
       console.error('집중 재개 실패:', error.message);
     } finally {
@@ -85,7 +96,10 @@ export default function S07Screen({ route, navigation }) {
   };
 
   const handleStopPreview = async () => {
-    if (!sessionId) return;
+    if (!isServerSession) {
+      navigation.navigate('S09', { sessionId, plotIndex });
+      return;
+    }
 
     try {
       setLoading(true);

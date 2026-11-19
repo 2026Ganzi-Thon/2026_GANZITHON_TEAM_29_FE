@@ -7,6 +7,7 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
+import { useIsFocused } from '@react-navigation/native';
 import { COLORS } from '../../styles/colors';
 import { FONTS } from '../../styles/fonts';
 import { commonStyles } from '../../styles/commonStyles';
@@ -16,23 +17,37 @@ import { iGa } from '../../utils/josa';
 import FarmScene3D from '../../components/farm/FarmScene3D';
 
 export default function S06Screen({ route, navigation }) {
-  const { plotIndex = 0, cropId, cropName = '당근', targetSeconds: routeTargetSeconds } = route.params || {};
+  const { plotIndex: routePlotIndex = 0, cropId, cropName, targetSeconds: routeTargetSeconds } = route.params || {};
+  const isFocused = useIsFocused();
+
+  // 이어서 키우는 경우 서버 세션 기준으로 바뀔 수 있어서 state로 둠
+  const [plotIndex, setPlotIndex] = useState(routePlotIndex);
+  const firstLoadRef = useRef(true);
 
   const [loading, setLoading] = useState(true);
   const [session, setSession] = useState(null);
   const [targetSeconds, setTargetSeconds] = useState(routeTargetSeconds || 600);
   const [remainingSeconds, setRemainingSeconds] = useState(routeTargetSeconds || 600);
+  // 타이머가 최신 남은 시간을 읽기 위한 값 (setState 안에서 화면 이동을 하면 오류가 나서 따로 둠)
+  const remainingRef = useRef(remainingSeconds);
+  useEffect(() => {
+    remainingRef.current = remainingSeconds;
+  }, [remainingSeconds]);
   const [plotsData, setPlotsData] = useState([]);
-  const [currentCropName, setCurrentCropName] = useState(cropName);
+  const [currentCropName, setCurrentCropName] = useState(cropName || '작물');
 
   const timerRef = useRef(null);
   const isMountedRef = useRef(true);
   const hasCheckedOverworkRef = useRef(false);
 
+  // 처음 들어올 때 + 다른 화면(S09 계속 키우기 등)에서 돌아올 때마다 서버 상태를 다시 맞춤
+  useEffect(() => {
+    if (isFocused) initFocusSession();
+  }, [isFocused]);
+
   useEffect(() => {
     isMountedRef.current = true;
     hasCheckedOverworkRef.current = false;
-    initFocusSession();
 
     return () => {
       isMountedRef.current = false;
@@ -44,47 +59,36 @@ export default function S06Screen({ route, navigation }) {
   }, []);
 
   const initFocusSession = async () => {
+    const isFirstLoad = firstLoadRef.current;
     try {
-      if (isMountedRef.current) setLoading(true);
+      if (isMountedRef.current && isFirstLoad) setLoading(true);
+
+      const farmRes = await supabase.rpc('get_my_farm');
+      if (farmRes.error) console.log('농장 조회 실패:', farmRes.error.message);
+      const farmData = farmRes.data || [];
 
       let currentSession = null;
+      const activeRes = await supabase.rpc('get_active_focus');
+      if (activeRes.error) console.log('활성 세션 조회 실패:', activeRes.error.message);
+      else currentSession = activeRes.data?.session ?? null;
 
-      try {
-        const { data, error } = await supabase.rpc('get_active_focus');
-        if (!error && data && data.session) {
-          currentSession = data.session;
-        }
-      } catch (err) {
-        console.log('활성 세션 조회 실패:', err?.message);
-      }
+      if (!currentSession && isFirstLoad) {
+        const targetPlot = farmData.find(p => p.plot_index === routePlotIndex + 1);
 
-      if (!currentSession) {
-        let targetPlotId = null;
-        try {
-          const { data: farmDataForStart } = await supabase.rpc('get_my_farm');
-          const targetPlot = farmDataForStart?.find(p => p.plot_index === plotIndex);
-          targetPlotId = targetPlot?.plot_id;
-        } catch (e) {
-          console.log('농장 정보 조회 실패:', e?.message);
-        }
-
-        if (targetPlotId && cropId) {
-          try {
-            const { data: startData, error: startError } = await supabase.rpc('start_focus', {
-              p_plot_id: targetPlotId,
-              p_crop_id: cropId,
-            });
-
-            if (!startError && startData) {
-              currentSession = startData;
-            }
-          } catch (e) {
-            console.log('start_focus 예외:', e?.message);
-          }
+        if (targetPlot?.plot_id && cropId) {
+          const { data: startData, error: startError } = await supabase.rpc('start_focus', {
+            p_plot_id: targetPlot.plot_id,
+            p_crop_id: cropId,
+          });
+          if (startError) console.log('start_focus 실패:', startError.message);
+          else currentSession = startData;
         }
       }
 
       if (!currentSession) {
+        // 다시 돌아왔는데 서버 세션이 없으면(10배속 테스트 등) 지금 화면 상태를 그대로 이어감
+        if (!isFirstLoad) return;
+
         const defaultTarget = routeTargetSeconds || 600;
         currentSession = {
           session_id: `local_session_${Date.now()}`,
@@ -95,44 +99,39 @@ export default function S06Screen({ route, navigation }) {
 
       if (!isMountedRef.current) return;
 
-      if (currentSession) {
-        setSession(currentSession);
-        
-        const tSec = currentSession.target_seconds || routeTargetSeconds || 600;
-        setTargetSeconds(tSec);
+      // 서버 세션이 있는 밭·작물 기준으로 맞춤 (S03·S07에서 이어서 들어오면 작물 정보가 없을 수 있음)
+      const sessionPlot = currentSession.plot_id
+        ? farmData.find(p => p.plot_id === currentSession.plot_id)
+        : null;
+      const activePlotIndex = sessionPlot ? sessionPlot.plot_index - 1 : routePlotIndex;
+      const activeCropName = sessionPlot?.crop_name || cropName || currentCropName;
 
-        const rSec = currentSession.remaining_seconds !== undefined && currentSession.remaining_seconds !== null
+      const tSec = currentSession.target_seconds || routeTargetSeconds || 600;
+      const serverRemaining =
+        currentSession.remaining_seconds !== undefined && currentSession.remaining_seconds !== null
           ? currentSession.remaining_seconds
           : tSec;
-        setRemainingSeconds(rSec);
+      // 10배속 테스트에서는 앱 시간이 서버보다 빨라서, 돌아왔을 때 시간이 뒤로 가지 않게 작은 쪽을 씀
+      const rSec = isFirstLoad ? serverRemaining : Math.min(serverRemaining, remainingRef.current);
 
-        if (currentSession.crop_name) {
-          setCurrentCropName(currentSession.crop_name);
-        }
-      }
+      setSession(currentSession);
+      setPlotIndex(activePlotIndex);
+      setCurrentCropName(activeCropName);
+      setTargetSeconds(tSec);
+      remainingRef.current = rSec;
+      setRemainingSeconds(rSec);
 
-      let farmData = [];
-      try {
-        const { data: fData } = await supabase.rpc('get_my_farm');
-        farmData = fData || [];
-      } catch (e) {
-        console.log('농장 상태 동기화 실패:', e?.message);
-      }
+      const currentProgress = calculateProgressForData(rSec, tSec);
 
-      if (!isMountedRef.current) return;
-
-      const currentProgress = calculateProgressForData(currentSession?.remaining_seconds, currentSession?.target_seconds || routeTargetSeconds || 600);
-      
       let calculatedStage = 1;
       if (currentProgress >= 80) calculatedStage = 5;
       else if (currentProgress >= 60) calculatedStage = 4;
       else if (currentProgress >= 40) calculatedStage = 3;
       else if (currentProgress >= 20) calculatedStage = 2;
-      else calculatedStage = 1;
 
       const formattedPlots = Array.from({ length: 12 }, (_, index) => {
-        const isCurrentFocusPlot = index === plotIndex;
-        const serverPlot = farmData?.find(item => item.plot_index === index);
+        const isCurrentFocusPlot = index === activePlotIndex;
+        const serverPlot = farmData.find(item => item.plot_index === index + 1);
 
         return {
           id: index,
@@ -140,16 +139,16 @@ export default function S06Screen({ route, navigation }) {
           plotId: serverPlot?.plot_id || null,
           farmStatus: isCurrentFocusPlot ? 'growing' : (serverPlot?.farm_status || 'empty'),
           sessionStatus: isCurrentFocusPlot ? 'focusing' : (serverPlot?.session_status || null),
-          cropId: isCurrentFocusPlot ? cropId : (serverPlot?.crop_id || null),
-          cropName: isCurrentFocusPlot ? currentCropName : (serverPlot?.crop_name || null),
-          stage: isCurrentFocusPlot ? calculatedStage : (serverPlot?.stage || 1),
+          cropId: isCurrentFocusPlot ? (currentSession.crop_id || cropId) : (serverPlot?.crop_id || null),
+          cropName: isCurrentFocusPlot ? activeCropName : (serverPlot?.crop_name || null),
+          stage: isCurrentFocusPlot ? calculatedStage : (serverPlot?.farm_status === 'ripe' ? 5 : 1),
         };
       });
       setPlotsData(formattedPlots);
-
     } catch (error) {
       console.error('집중 세션 초기화 실패:', error.message);
     } finally {
+      firstLoadRef.current = false;
       if (isMountedRef.current) setLoading(false);
     }
   };
@@ -182,18 +181,22 @@ export default function S06Screen({ route, navigation }) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    try {
-      if (session?.session_id && !session.session_id.startsWith('local_')) {
-        await supabase.rpc('complete_focus', { p_session_id: session.session_id }).catch(() => {});
-      }
-    } catch (e) {
-      // 무시
+    const serverSessionId =
+      session?.session_id && !session.session_id.startsWith('local_') ? session.session_id : undefined;
+
+    // 목표 시간이 실제로 지났으면 서버가 ripe로 확정함 (10배속 테스트는 서버에선 아직 키우는 중)
+    if (serverSessionId) {
+      const { error } = await supabase.rpc('finalize_my_focus');
+      if (error) console.log('finalize_my_focus 실패:', error.message);
     }
+
     if (isMountedRef.current) {
+      // S10에서 sessionId로 수확(harvest_crop)함
       navigation.replace('S10', {
         cropName: currentCropName,
         minutes: Math.round(targetSeconds / 60) || 10,
         plotIndex,
+        sessionId: serverSessionId,
       });
     }
   };
@@ -214,42 +217,48 @@ export default function S06Screen({ route, navigation }) {
 
   // ⚡ 10배속 타이머 루프 (1초마다 10초씩 남은 시간을 줄여줌)
   useEffect(() => {
-    if (!session) return;
+    if (!session || !isFocused) return;
 
     timerRef.current = setInterval(() => {
       if (!isMountedRef.current) return;
 
-      setRemainingSeconds(prev => {
-        if (prev <= 10) {
-          if (timerRef.current) {
-            clearInterval(timerRef.current);
-            timerRef.current = null;
-          }
-          handleCompleteFocus();
-          return 0;
+      const prev = remainingRef.current;
+
+      if (prev <= 10) {
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
         }
-        const nextSec = prev - 10; // ⚡ 10배속 적용
-        const elapsedSec = targetSeconds - nextSec;
+        remainingRef.current = 0;
+        setRemainingSeconds(0);
+        handleCompleteFocus();
+        return;
+      }
 
-        if (elapsedSec > 5400 && session?.session_id && !hasCheckedOverworkRef.current) {
-          checkOverworkNotice(session.session_id);
-        }
-        
-        const updatedProgress = Math.min(Math.max(Math.floor((elapsedSec / targetSeconds) * 100), 0), 100);
-        
-        let newStage = 1;
-        if (updatedProgress >= 80) newStage = 5;
-        else if (updatedProgress >= 60) newStage = 4;
-        else if (updatedProgress >= 40) newStage = 3;
-        else if (updatedProgress >= 20) newStage = 2;
-        else newStage = 1;
+      const nextSec = prev - 10; // ⚡ 10배속 적용
+      remainingRef.current = nextSec;
+      setRemainingSeconds(nextSec);
 
-        setPlotsData(prevPlots =>
-          prevPlots.map(p => p.id === plotIndex ? { ...p, stage: newStage } : p)
-        );
+      const elapsedSec = targetSeconds - nextSec;
 
-        return nextSec;
-      });
+      if (elapsedSec > 5400 && session?.session_id && !hasCheckedOverworkRef.current) {
+        checkOverworkNotice(session.session_id);
+      }
+
+      const updatedProgress = Math.min(Math.max(Math.floor((elapsedSec / targetSeconds) * 100), 0), 100);
+
+      let newStage = 1;
+      if (updatedProgress >= 80) newStage = 5;
+      else if (updatedProgress >= 60) newStage = 4;
+      else if (updatedProgress >= 40) newStage = 3;
+      else if (updatedProgress >= 20) newStage = 2;
+
+      // 단계가 바뀔 때만 밭 정보를 새로 만듦
+      setPlotsData(prevPlots =>
+        prevPlots.some(p => p.id === plotIndex && p.stage !== newStage)
+          ? prevPlots.map(p => (p.id === plotIndex ? { ...p, stage: newStage } : p))
+          : prevPlots
+      );
     }, 1000);
 
     return () => {
@@ -258,7 +267,7 @@ export default function S06Screen({ route, navigation }) {
         timerRef.current = null;
       }
     };
-  }, [session, targetSeconds, plotIndex]);
+  }, [session, targetSeconds, plotIndex, isFocused]);
 
   const formatTime = (secs) => {
     const minutes = Math.floor(secs / 60);
@@ -287,10 +296,12 @@ export default function S06Screen({ route, navigation }) {
     }
 
     if (isMountedRef.current) {
-      navigation.navigate('S07', { 
-        sessionId: session?.session_id || 'local_session', 
-        remainingSeconds: pausedRemaining, 
-        plotIndex 
+      navigation.replace('S07', {
+        sessionId: session?.session_id || 'local_session',
+        remainingSeconds: pausedRemaining,
+        plotIndex,
+        cropId: session?.crop_id || cropId,
+        cropName: currentCropName,
       });
     }
   };

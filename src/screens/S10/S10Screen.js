@@ -1,21 +1,88 @@
-import React, { useState } from 'react';
-import { StyleSheet, Text, TextInput, View } from 'react-native';
+import React, { useEffect, useState } from 'react';
+import { StyleSheet, Text, View } from 'react-native';
 
 import FarmSheetLayout from '../../components/common/FarmSheetLayout';
 import AppButton from '../../components/common/AppButton';
+import AppTextInput from '../../components/common/AppTextInput';
 import { COLORS } from '../../styles/colors';
 import { eulReul } from '../../utils/josa';
+import { harvestCrop, harvestErrorMessage, saveHarvestNote, startRest } from '../../lib/harvest';
 
 // S10 수확 완료
+// - S17에서 오면 harvestId를 받음 (이미 수확함)
+// - S06에서 바로 오면 sessionId를 받아서 여기서 수확함
 export default function S10Screen({ navigation, route }) {
-  const { cropName = '당근', minutes = 20 } = route.params ?? {};
+  const { cropName = '당근', minutes: paramMinutes = 20, sessionId, harvestId: paramHarvestId } =
+    route.params ?? {};
 
+  const [harvestId, setHarvestId] = useState(paramHarvestId ?? null);
+  const [minutes, setMinutes] = useState(paramMinutes);
   const [showRestCard, setShowRestCard] = useState(true);
   const [memo, setMemo] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState('');
 
-  const goToFarm = () => {
-    // TODO: 오늘 한 줄(memo) 서버 저장
-    navigation.popTo('S03', { justHarvested: true });
+  useEffect(() => {
+    if (paramHarvestId || !sessionId) return;
+    let alive = true;
+
+    harvestCrop(sessionId)
+      .then((result) => {
+        if (!alive) return;
+        setHarvestId(result.harvest_id);
+        if (result.focused_seconds) setMinutes(Math.round(result.focused_seconds / 60));
+      })
+      .catch((e) => {
+        // 10배속 테스트처럼 서버에서 아직 다 자라지 않은 경우 NOT_RIPE
+        console.log('수확 저장 실패:', e.code);
+      });
+
+    return () => {
+      alive = false;
+    };
+  }, [paramHarvestId, sessionId]);
+
+  const goRest = async () => {
+    if (loading) return;
+
+    // TODO: 수확 기록이 없을 때(테스트 등)는 서버 없이 5분 휴식
+    if (!harvestId) {
+      navigation.navigate('S11');
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    try {
+      const rest = await startRest(harvestId);
+      navigation.navigate('S11', { restEndsAt: rest.rest_ends_at, serverNow: rest.server_now });
+    } catch (e) {
+      setError(harvestErrorMessage(e));
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const goToFarm = async () => {
+    if (loading) return;
+    const note = memo.trim();
+
+    if (!note || !harvestId) {
+      navigation.popTo('S03', { justHarvested: true });
+      return;
+    }
+
+    setLoading(true);
+    setError('');
+    try {
+      // guidance_required(저장 안 됨)여도 S13 없이 농장으로 감
+      await saveHarvestNote(harvestId, note);
+      navigation.popTo('S03', { justHarvested: true });
+    } catch (e) {
+      setError(harvestErrorMessage(e));
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
@@ -31,30 +98,33 @@ export default function S10Screen({ navigation, route }) {
           <View style={styles.restButtons}>
             <AppButton
               title="쉬어가기"
-              onPress={() => navigation.navigate('S11')}
+              onPress={goRest}
+              disabled={loading}
               style={styles.restButton}
             />
             <AppButton
               title="건너뛰기"
               variant="outline"
               onPress={() => setShowRestCard(false)}
+              disabled={loading}
               style={styles.restButton}
             />
           </View>
         </View>
       )}
 
-      <TextInput
+      <AppTextInput
         style={styles.memoInput}
         placeholder="오늘 한 줄 남기기 (선택)"
-        placeholderTextColor="#A6A6A6"
         value={memo}
         onChangeText={setMemo}
         maxLength={50}
         returnKeyType="done"
       />
 
-      <AppButton title="농장으로 가기" onPress={goToFarm} />
+      {!!error && <Text style={styles.error}>{error}</Text>}
+
+      <AppButton title="농장으로 가기" onPress={goToFarm} disabled={loading} />
     </FarmSheetLayout>
   );
 }
@@ -99,15 +169,15 @@ const styles = StyleSheet.create({
   },
 
   memoInput: {
-    height: 50,
     marginTop: 16,
     marginBottom: 16,
-    paddingHorizontal: 16,
-    borderWidth: 1,
-    borderColor: COLORS.darkGray,
-    borderRadius: 12,
-    fontSize: 14,
-    color: COLORS.black,
-    backgroundColor: COLORS.white,
+  },
+
+  error: {
+    marginTop: -6,
+    marginBottom: 12,
+    fontSize: 13,
+    color: '#E5484D',
+    textAlign: 'center',
   },
 });
