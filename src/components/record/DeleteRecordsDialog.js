@@ -4,8 +4,8 @@ import { Modal, Pressable, StyleSheet, Text, View } from 'react-native';
 import AppButton from '../common/AppButton';
 import { COLORS } from '../../styles/colors';
 
-// S16 · 기록 삭제 확인 창
-export default function DeleteRecordsDialog({ visible, onConfirm, onCancel }) {
+// S16 기록 삭제 확인 창 (S14 위에 뜸)
+export default function DeleteRecordsDialog({ visible, onConfirm, onCancel, loading = false, error = '' }) {
   return (
     <Modal
       visible={visible}
@@ -21,8 +21,15 @@ export default function DeleteRecordsDialog({ visible, onConfirm, onCancel }) {
             {'농장과 집중 기록이 서버에서 삭제되고\n되돌릴 수 없어요.'}
           </Text>
 
-          <AppButton title="모두 지우기" onPress={onConfirm} style={styles.confirmButton} />
-          <AppButton title="취소" variant="outline" onPress={onCancel} />
+          {!!error && <Text style={styles.error}>{error}</Text>}
+
+          <AppButton
+            title={loading ? '지우는 중...' : '모두 지우기'}
+            onPress={onConfirm}
+            disabled={loading}
+            style={styles.confirmButton}
+          />
+          <AppButton title="취소" variant="outline" onPress={onCancel} disabled={loading} />
         </Pressable>
       </Pressable>
     </Modal>
@@ -57,6 +64,13 @@ const styles = StyleSheet.create({
     fontSize: 14,
     lineHeight: 21,
     color: COLORS.graytext,
+    textAlign: 'center',
+  },
+
+  error: {
+    marginTop: 12,
+    fontSize: 13,
+    color: '#E5484D',
     textAlign: 'center',
   },
 

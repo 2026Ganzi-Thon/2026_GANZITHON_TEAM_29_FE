@@ -9,7 +9,15 @@ import { File } from 'expo-file-system';
 import { encode } from 'base64-arraybuffer';
 import { GLTFLoader } from 'three-stdlib';
 
+import { useSettings } from '../settings/SettingsContext';
+
 global.THREE = global.THREE || THREE;
+
+// 농장 모델 안의 창고 오브젝트. 누르면 설정 창이 열림
+// (GLB를 불러올 때 이름의 공백·점이 바뀌므로 sanitizeNodeName으로 맞춰서 찾음)
+const BARN_NODE_NAME = 'farm scene 3d model.004';
+// 창고가 작아서 주변을 조금 넉넉하게 눌러도 인식되도록
+const BARN_HIT_PADDING = 0.1;
 
 const CROP_MESH_MAP = {
   '새싹채소_새싹': 'cartoon_vegetables_3d_model001',
@@ -173,8 +181,10 @@ export default function FarmScene3D({
   plotsData = [],
   selectedPlotIndex,
   onSelectPlot,
+  onPressBackground,
 }) {
   const isFocused = useIsFocused();
+  const settings = useSettings();
 
   return (
     <View style={[styles.container, { backgroundColor: `#${backgroundColor.toString(16).padStart(6, '0')}` }]}>
@@ -187,6 +197,8 @@ export default function FarmScene3D({
         plotsData={plotsData}
         selectedPlotIndex={selectedPlotIndex}
         onSelectPlot={onSelectPlot}
+        onPressBarn={settings.canOpen ? settings.open : null}
+        onPressBackground={onPressBackground}
         active={isFocused}
       />
     </View>
@@ -202,6 +214,8 @@ function FarmCanvas({
   plotsData,
   selectedPlotIndex,
   onSelectPlot,
+  onPressBarn,
+  onPressBackground,
   active,
 }) {
   const animationRef = useRef(null);
@@ -225,6 +239,7 @@ function FarmCanvas({
 
   const selectedPlotIndexRef = useRef(selectedPlotIndex);
   const onSelectPlotRef = useRef(onSelectPlot);
+  const barnBoxRef = useRef(null);
   const plotsDataRef = useRef(plotsData);
 
   useEffect(() => { selectedPlotIndexRef.current = selectedPlotIndex; }, [selectedPlotIndex]);
@@ -446,6 +461,14 @@ function FarmCanvas({
       scene.add(clonedFarm);
       farmModelRef.current = clonedFarm;
 
+      const barn =
+        clonedFarm.getObjectByName(THREE.PropertyBinding.sanitizeNodeName(BARN_NODE_NAME)) ??
+        clonedFarm.getObjectByName(BARN_NODE_NAME);
+      if (!barn) console.log('창고 오브젝트를 찾지 못했어요:', BARN_NODE_NAME);
+      barnBoxRef.current = barn
+        ? new THREE.Box3().setFromObject(barn).expandByScalar(BARN_HIT_PADDING)
+        : null;
+
       const plotMeshes = [];
       clonedFarm.traverse((child) => {
         if (child.isMesh) {
@@ -526,29 +549,44 @@ function FarmCanvas({
     <View
       style={styles.glView}
       onLayout={(e) => { layoutRef.current = e.nativeEvent.layout; }}
-      onStartShouldSetResponder={() => !!onSelectPlot}
+      onStartShouldSetResponder={() => !!(onSelectPlot || onPressBarn || onPressBackground)}
       onResponderGrant={(e) => {
         touchStartRef.current = { x: e.nativeEvent.locationX, y: e.nativeEvent.locationY, time: Date.now() };
       }}
       onResponderRelease={(e) => {
-        if (!onSelectPlotRef.current || !touchStartRef.current) return;
+        if (!touchStartRef.current) return;
         const { locationX, locationY } = e.nativeEvent;
         const camera = cameraRef.current;
         const plotMeshes = plotMeshesRef.current;
         const { width, height } = layoutRef.current;
-        if (!camera || !width || !height) return;
+
+        if (!camera || !width || !height) {
+          onPressBackground?.();
+          return;
+        }
 
         const mouse = new THREE.Vector2((locationX / width) * 2 - 1, -(locationY / height) * 2 + 1);
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(mouse, camera);
 
-        if (plotMeshes.length > 0) {
+        // 창고 → 밭 → 나머지 순서로 확인
+        if (onPressBarn && barnBoxRef.current && raycaster.ray.intersectsBox(barnBoxRef.current)) {
+          onPressBarn();
+          return;
+        }
+
+        if (onSelectPlotRef.current && plotMeshes.length > 0) {
           const hits = raycaster.intersectObjects(plotMeshes, true);
           if (hits.length > 0) {
             const pIdx = hits[0].object.userData?.plotIndex ?? hits[0].object.parent?.userData?.plotIndex;
-            if (pIdx !== undefined) onSelectPlotRef.current(pIdx);
+            if (pIdx !== undefined) {
+              onSelectPlotRef.current(pIdx);
+              return;
+            }
           }
         }
+
+        onPressBackground?.();
       }}
     >
       <GLView style={styles.glView} onContextCreate={onContextCreate} />
