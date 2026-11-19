@@ -16,6 +16,9 @@ import { iGa } from '../../utils/josa';
 
 import FarmScene3D from '../../components/farm/FarmScene3D';
 
+// 테스트용 배속: 1초에 몇 초씩 줄일지 (발표·실사용 때는 1로)
+const TEST_SPEED = 240;
+
 export default function S06Screen({ route, navigation }) {
   const { plotIndex: routePlotIndex = 0, cropId, cropName, targetSeconds: routeTargetSeconds } = route.params || {};
   const isFocused = useIsFocused();
@@ -86,7 +89,7 @@ export default function S06Screen({ route, navigation }) {
       }
 
       if (!currentSession) {
-        // 다시 돌아왔는데 서버 세션이 없으면(10배속 테스트 등) 지금 화면 상태를 그대로 이어감
+        // 다시 돌아왔는데 서버 세션이 없으면(배속 테스트 등) 지금 화면 상태를 그대로 이어감
         if (!isFirstLoad) return;
 
         const defaultTarget = routeTargetSeconds || 600;
@@ -111,7 +114,7 @@ export default function S06Screen({ route, navigation }) {
         currentSession.remaining_seconds !== undefined && currentSession.remaining_seconds !== null
           ? currentSession.remaining_seconds
           : tSec;
-      // 10배속 테스트에서는 앱 시간이 서버보다 빨라서, 돌아왔을 때 시간이 뒤로 가지 않게 작은 쪽을 씀
+      // 배속 테스트에서는 앱 시간이 서버보다 빨라서, 돌아왔을 때 시간이 뒤로 가지 않게 작은 쪽을 씀
       const rSec = isFirstLoad ? serverRemaining : Math.min(serverRemaining, remainingRef.current);
 
       setSession(currentSession);
@@ -184,7 +187,7 @@ export default function S06Screen({ route, navigation }) {
     const serverSessionId =
       session?.session_id && !session.session_id.startsWith('local_') ? session.session_id : undefined;
 
-    // 목표 시간이 실제로 지났으면 서버가 ripe로 확정함 (10배속 테스트는 서버에선 아직 키우는 중)
+    // 목표 시간이 실제로 지났으면 서버가 ripe로 확정함 (배속 테스트는 서버에선 아직 키우는 중)
     if (serverSessionId) {
       const { error } = await supabase.rpc('finalize_my_focus');
       if (error) console.log('finalize_my_focus 실패:', error.message);
@@ -215,7 +218,7 @@ export default function S06Screen({ route, navigation }) {
     return Math.min(Math.max(progress, 0), 100);
   };
 
-  // ⚡ 10배속 타이머 루프 (1초마다 10초씩 남은 시간을 줄여줌)
+  // ⚡ 테스트 배속 타이머 루프 (1초마다 TEST_SPEED초씩 남은 시간을 줄여줌)
   useEffect(() => {
     if (!session || !isFocused) return;
 
@@ -224,7 +227,7 @@ export default function S06Screen({ route, navigation }) {
 
       const prev = remainingRef.current;
 
-      if (prev <= 10) {
+      if (prev <= TEST_SPEED) {
         if (timerRef.current) {
           clearInterval(timerRef.current);
           timerRef.current = null;
@@ -235,7 +238,7 @@ export default function S06Screen({ route, navigation }) {
         return;
       }
 
-      const nextSec = prev - 10; // ⚡ 10배속 적용
+      const nextSec = prev - TEST_SPEED;
       remainingRef.current = nextSec;
       setRemainingSeconds(nextSec);
 
@@ -375,7 +378,9 @@ export default function S06Screen({ route, navigation }) {
         <View style={styles.topSpacer} />
 
         <View style={styles.bottomSheet}>
-          <Text style={styles.title}>{currentCropName} 키우는 중 (10배속 테스트)</Text>
+          <Text style={styles.title}>
+            {currentCropName} 키우는 중{TEST_SPEED > 1 ? ` (${TEST_SPEED}배속 테스트)` : ''}
+          </Text>
           <Text style={styles.subtitle}>휴대폰을 세워두고 작물이 자라는 걸 지켜봐 주세요</Text>
 
           <View style={styles.stageContainer}>

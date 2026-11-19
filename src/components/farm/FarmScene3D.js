@@ -180,6 +180,34 @@ async function loadCropsModel() {
   return cropsModelPromise;
 }
 
+// 물뿌리개 같은 다른 3D 소품 불러오기 (key마다 한 번만 불러오고 재사용)
+const extraModelPromises = {};
+export function loadExtraModel(key, assetModule) {
+  if (!extraModelPromises[key]) {
+    extraModelPromises[key] = (async () => {
+      const asset = Asset.fromModule(assetModule);
+      await asset.downloadAsync();
+      const buffer = await readLocalFile(asset.localUri);
+      const loader = createSafeGLTFLoader(key);
+      const gltf = await new Promise((resolve, reject) => loader.parse(buffer, '', resolve, reject));
+
+      gltf.scene.traverse((child) => {
+        if (child.isMesh && child.material) {
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          materials.forEach(safeConfigureMaterial);
+        }
+      });
+      return gltf.scene;
+    })().catch((error) => {
+      delete extraModelPromises[key];
+      throw error;
+    });
+  }
+  return extraModelPromises[key];
+}
+
+// - onSceneReady: 농장 장면이 준비되면 실행. 연출(물 주기 등)을 붙일 때 씀
+//   ({ scene, farm, plotCenters, addFrameCallback }) => 정리 함수
 export default function FarmScene3D({
   backgroundColor = 0xf5f1e8,
   visibleWidth,
@@ -190,6 +218,7 @@ export default function FarmScene3D({
   selectedPlotIndex,
   onSelectPlot,
   onPressBackground,
+  onSceneReady,
 }) {
   const isFocused = useIsFocused();
   const settings = useSettings();
@@ -207,6 +236,7 @@ export default function FarmScene3D({
         onSelectPlot={onSelectPlot}
         onPressBarn={settings.canOpen ? settings.open : null}
         onPressBackground={onPressBackground}
+        onSceneReady={onSceneReady}
         active={isFocused}
       />
     </View>
@@ -224,11 +254,16 @@ function FarmCanvas({
   onSelectPlot,
   onPressBarn,
   onPressBackground,
+  onSceneReady,
   active,
 }) {
   const animationRef = useRef(null);
   const rendererRef = useRef(null);
   const renderRef = useRef(null);
+  const onSceneReadyRef = useRef(onSceneReady);
+  onSceneReadyRef.current = onSceneReady;
+  const frameCallbacksRef = useRef(new Set());
+  const sceneCleanupRef = useRef(null);
   const mountedRef = useRef(true);
   const activeRef = useRef(active);
 
@@ -325,6 +360,9 @@ function FarmCanvas({
         cancelAnimationFrame(animationRef.current);
         animationRef.current = null;
       }
+      sceneCleanupRef.current?.();
+      sceneCleanupRef.current = null;
+      frameCallbacksRef.current.clear();
       rendererRef.current?.dispose();
       rendererRef.current = null;
     };
@@ -431,6 +469,9 @@ function FarmCanvas({
       lastCropsKeyRef.current = null;
       cropsGroupRef.current = null;
       pendingGroupRef.current = null;
+      sceneCleanupRef.current?.();
+      sceneCleanupRef.current = null;
+      frameCallbacksRef.current.clear();
       const width = gl.drawingBufferWidth;
       const height = gl.drawingBufferHeight;
       if (width === 0 || height === 0) return;
@@ -526,6 +567,19 @@ function FarmCanvas({
       // 준비하는 동안 plotsData가 바뀌었으면 여기서 반영 (같으면 아무것도 안 함)
       updateCrops();
 
+      if (onSceneReadyRef.current) {
+        const cleanup = onSceneReadyRef.current({
+          scene,
+          farm: clonedFarm,
+          plotCenters: plotCentersRef.current,
+          addFrameCallback: (callback) => {
+            frameCallbacksRef.current.add(callback);
+            return () => frameCallbacksRef.current.delete(callback);
+          },
+        });
+        sceneCleanupRef.current = typeof cleanup === 'function' ? cleanup : null;
+      }
+
       const currentSelected = selectedPlotIndexRef.current;
       if (currentSelected !== null && currentSelected !== undefined) {
         plotMeshes.forEach((mesh) => {
@@ -560,6 +614,7 @@ function FarmCanvas({
         }
         animationRef.current = requestAnimationFrame(render);
         if (now - lastRenderTime < 32) return;
+        const deltaSeconds = lastRenderTime ? Math.min((now - lastRenderTime) / 1000, 0.1) : 0;
         lastRenderTime = now;
         try {
           if (pendingGroupRef.current && sceneRef.current) {
@@ -570,6 +625,7 @@ function FarmCanvas({
             sceneRef.current.add(nextGroup);
             if (prevGroup) sceneRef.current.remove(prevGroup);
           }
+          frameCallbacksRef.current.forEach((callback) => callback(deltaSeconds));
           renderer.render(scene, camera);
           gl.endFrameEXP();
         } catch (renderErr) {

@@ -9,7 +9,7 @@ import { harvestCrop, harvestErrorMessage } from '../../lib/harvest';
 
 // S17 수확 확인 창 (S03에서 다 자란 밭을 누르면 열림)
 export default function S17Screen({ navigation, route }) {
-  const { cropName = '당근', minutes = 20, sessionId } = route.params ?? {};
+  const { cropName = '당근', minutes = 20, sessionId, plotIndex } = route.params ?? {};
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
@@ -24,7 +24,7 @@ export default function S17Screen({ navigation, route }) {
 
     // TODO: S03에서 sessionId를 넘겨주면 이 분기 지우기
     if (!sessionId) {
-      navigation.navigate('S10', { cropName, minutes });
+      navigation.navigate('S10', { cropName, minutes, plotIndex });
       return;
     }
 
@@ -36,6 +36,7 @@ export default function S17Screen({ navigation, route }) {
         cropName,
         minutes: Math.round(result.focused_seconds / 60) || minutes,
         harvestId: result.harvest_id,
+        plotIndex,
       });
     } catch (e) {
       setError(harvestErrorMessage(e));

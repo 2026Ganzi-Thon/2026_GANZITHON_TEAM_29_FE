@@ -12,8 +12,13 @@ import { harvestCrop, harvestErrorMessage, saveHarvestNote, startRest } from '..
 // - S17에서 오면 harvestId를 받음 (이미 수확함)
 // - S06에서 바로 오면 sessionId를 받아서 여기서 수확함
 export default function S10Screen({ navigation, route }) {
-  const { cropName = '당근', minutes: paramMinutes = 20, sessionId, harvestId: paramHarvestId } =
-    route.params ?? {};
+  const {
+    cropName = '당근',
+    minutes: paramMinutes = 20,
+    sessionId,
+    harvestId: paramHarvestId,
+    plotIndex,
+  } = route.params ?? {};
 
   const [harvestId, setHarvestId] = useState(paramHarvestId ?? null);
   const [minutes, setMinutes] = useState(paramMinutes);
@@ -47,7 +52,7 @@ export default function S10Screen({ navigation, route }) {
 
     // TODO: 수확 기록이 없을 때(테스트 등)는 서버 없이 5분 휴식
     if (!harvestId) {
-      navigation.navigate('S11');
+      navigation.navigate('S11', { plotIndex });
       return;
     }
 
@@ -55,7 +60,11 @@ export default function S10Screen({ navigation, route }) {
     setError('');
     try {
       const rest = await startRest(harvestId);
-      navigation.navigate('S11', { restEndsAt: rest.rest_ends_at, serverNow: rest.server_now });
+      navigation.navigate('S11', {
+        restEndsAt: rest.rest_ends_at,
+        serverNow: rest.server_now,
+        plotIndex,
+      });
     } catch (e) {
       setError(harvestErrorMessage(e));
     } finally {
