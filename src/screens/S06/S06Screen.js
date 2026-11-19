@@ -187,10 +187,33 @@ export default function S06Screen({ route, navigation }) {
     const serverSessionId =
       session?.session_id && !session.session_id.startsWith('local_') ? session.session_id : undefined;
 
-    // 목표 시간이 실제로 지났으면 서버가 ripe로 확정함 (배속 테스트는 서버에선 아직 키우는 중)
+    let harvestSessionId = serverSessionId;
+
+    // 목표 시간이 실제로 지났으면 서버가 ripe로 확정함
     if (serverSessionId) {
       const { error } = await supabase.rpc('finalize_my_focus');
       if (error) console.log('finalize_my_focus 실패:', error.message);
+
+      // 배속 테스트: 서버에선 아직 키우는 중이라 수확이 안 되고 밭도 계속 차 있음
+      // → 씨앗으로 보관(중도 종료)해서 밭을 비움. 기록에는 씨앗 1개로 남음
+      if (TEST_SPEED > 1) {
+        const { data: active } = await supabase.rpc('get_active_focus');
+        if (active?.session?.session_id === serverSessionId) {
+          harvestSessionId = undefined;
+          const { data: preview, error: previewError } = await supabase.rpc('preview_stop_focus', {
+            p_session_id: serverSessionId,
+          });
+          if (previewError) {
+            console.log('배속 테스트 정리 실패(미리보기):', previewError.message);
+          } else {
+            const { error: confirmError } = await supabase.rpc('confirm_stop_focus', {
+              p_stop_token: preview.stop_token,
+            });
+            if (confirmError) console.log('배속 테스트 정리 실패(확정):', confirmError.message);
+            else console.log('배속 테스트: 서버에선 아직 덜 자라서 씨앗으로 보관하고 밭을 비웠어요');
+          }
+        }
+      }
     }
 
     if (isMountedRef.current) {
@@ -199,7 +222,7 @@ export default function S06Screen({ route, navigation }) {
         cropName: currentCropName,
         minutes: Math.round(targetSeconds / 60) || 10,
         plotIndex,
-        sessionId: serverSessionId,
+        sessionId: harvestSessionId,
       });
     }
   };
