@@ -9,7 +9,15 @@ import { File } from 'expo-file-system';
 import { encode } from 'base64-arraybuffer';
 import { GLTFLoader } from 'three-stdlib';
 
+import { useSettings } from '../settings/SettingsContext';
+
 global.THREE = global.THREE || THREE;
+
+// 농장 모델 안의 창고 오브젝트. 누르면 설정 창이 열림
+// (GLB를 불러올 때 이름의 공백·점이 바뀌므로 sanitizeNodeName으로 맞춰서 찾음)
+const BARN_NODE_NAME = 'farm scene 3d model.004';
+// 창고가 작아서 주변을 조금 넉넉하게 눌러도 인식되도록
+const BARN_HIT_PADDING = 0.1;
 
 const CROP_MESH_MAP = {
   '새싹채소_새싹': 'cartoon_vegetables_3d_model001',
@@ -91,12 +99,11 @@ function createSafeGLTFLoader(prefix) {
 
 function safeConfigureMaterial(mat) {
   if (!mat) return mat;
-  if ('roughness' in mat) mat.roughness = 0.6;
-  if ('metalness' in mat) mat.metalness = 0.1;
   if (mat.map) {
     mat.map.encoding = THREE.sRGBEncoding;
     mat.map.flipY = false;
   }
+  mat.needsUpdate = true;
   return mat;
 }
 
@@ -157,9 +164,6 @@ async function loadCropsModel() {
           } else if (child.material) {
             safeConfigureMaterial(child.material);
           }
-          if (child.geometry && !child.geometry.boundingBox) {
-            child.geometry.computeBoundingBox();
-          }
         }
       });
       return cropGltf.scene;
@@ -177,8 +181,10 @@ export default function FarmScene3D({
   plotsData = [],
   selectedPlotIndex,
   onSelectPlot,
+  onPressBackground,
 }) {
   const isFocused = useIsFocused();
+  const settings = useSettings();
 
   return (
     <View style={[styles.container, { backgroundColor: `#${backgroundColor.toString(16).padStart(6, '0')}` }]}>
@@ -191,6 +197,8 @@ export default function FarmScene3D({
         plotsData={plotsData}
         selectedPlotIndex={selectedPlotIndex}
         onSelectPlot={onSelectPlot}
+        onPressBarn={settings.canOpen ? settings.open : null}
+        onPressBackground={onPressBackground}
         active={isFocused}
       />
     </View>
@@ -206,6 +214,8 @@ function FarmCanvas({
   plotsData,
   selectedPlotIndex,
   onSelectPlot,
+  onPressBarn,
+  onPressBackground,
   active,
 }) {
   const animationRef = useRef(null);
@@ -218,7 +228,6 @@ function FarmCanvas({
   const sceneRef = useRef(null);
   const farmModelRef = useRef(null);
   const cropsGroupRef = useRef(null);
-  const pendingGroupRef = useRef(null);
   const lastCropsKeyRef = useRef(null);
   const plotMeshesRef = useRef([]);
   const plotCentersRef = useRef([]);
@@ -227,10 +236,10 @@ function FarmCanvas({
   const isSceneReadyRef = useRef(false);
   const isUpdatingRef = useRef(false);
   const pendingUpdateRef = useRef(false);
-  const lastPlotsSignatureRef = useRef('');
 
   const selectedPlotIndexRef = useRef(selectedPlotIndex);
   const onSelectPlotRef = useRef(onSelectPlot);
+  const barnBoxRef = useRef(null);
   const plotsDataRef = useRef(plotsData);
 
   useEffect(() => { selectedPlotIndexRef.current = selectedPlotIndex; }, [selectedPlotIndex]);
@@ -238,17 +247,6 @@ function FarmCanvas({
 
   useEffect(() => {
     plotsDataRef.current = plotsData;
-    const sig = JSON.stringify(
-      (plotsData || []).map((p) => [
-        p.plotIndex ?? p.id,
-        p.cropName || '',
-        p.stage ?? 1,
-        p.farmStatus || '',
-      ])
-    );
-    if (sig === lastPlotsSignatureRef.current) return;
-    lastPlotsSignatureRef.current = sig;
-
     if (isSceneReadyRef.current && sceneRef.current && farmModelRef.current) {
       updateCrops();
     }
@@ -288,6 +286,7 @@ function FarmCanvas({
             mat.emissiveIntensity = 0;
           }
         }
+        mat.needsUpdate = true;
       };
 
       if (Array.isArray(mesh.material)) {
@@ -321,6 +320,7 @@ function FarmCanvas({
     try {
       if (!sceneRef.current || !farmModelRef.current || !mountedRef.current) return;
 
+      // 타이머 때문에 plotsData가 매초 새로 들어와도, 작물·단계가 그대로면 다시 만들지 않음
       const cropsKey = (plotsDataRef.current || [])
         .map((plot) => {
           const pIndex = plot.plotIndex !== undefined ? plot.plotIndex : plot.id;
@@ -334,7 +334,6 @@ function FarmCanvas({
 
       const nextGroup = new THREE.Group();
       const currentPlots = plotsDataRef.current;
-      const farmScale = farmModelRef.current.scale.x;
 
       if (currentPlots && currentPlots.length > 0) {
         currentPlots.forEach((plot) => {
@@ -350,29 +349,36 @@ function FarmCanvas({
             else targetKey = `${cropName}_3`;
 
             const targetMeshName = CROP_MESH_MAP[targetKey];
-            const plotCenter = plotCentersRef.current[pIndex];
 
-            if (targetMeshName && plotCenter) {
+            if (targetMeshName) {
               cropsScene.traverse((child) => {
                 if (child.isMesh && child.name === targetMeshName && child.geometry) {
-                  const pivot = new THREE.Group();
-                  pivot.position.set(
-                    plotCenter.x,
-                    plotCenter.y + (modelOffsetY || 0) - 2.1,
-                    plotCenter.z
-                  );
-                  pivot.scale.setScalar(farmScale * 0.85);
+                  const cropClone = child.clone(false);
+                  cropClone.position.set(0, 0, 0);
+                  cropClone.rotation.set(0, 0, 0);
+                  cropClone.scale.set(1, 1, 1);
 
-                  const meshNode = new THREE.Mesh(child.geometry, child.material);
-                  const box = child.geometry.boundingBox;
+                  const centeredGeo = child.geometry.clone();
+                  centeredGeo.computeBoundingBox();
+                  const box = centeredGeo.boundingBox;
                   if (box) {
-                    const center = new THREE.Vector3();
-                    box.getCenter(center);
-                    meshNode.position.set(-center.x, -box.min.y, -center.z);
+                    const meshCenter = new THREE.Vector3();
+                    box.getCenter(meshCenter);
+                    centeredGeo.translate(-meshCenter.x, -box.min.y, -meshCenter.z);
                   }
+                  cropClone.geometry = centeredGeo;
 
-                  pivot.add(meshNode);
-                  nextGroup.add(pivot);
+                  const plotCenter = plotCentersRef.current[pIndex];
+                  if (plotCenter && farmModelRef.current) {
+                    const farmScale = farmModelRef.current.scale.x;
+                    cropClone.position.set(
+                      plotCenter.x,
+                      plotCenter.y + (modelOffsetY || 0) - 2.1,
+                      plotCenter.z
+                    );
+                    cropClone.scale.multiplyScalar(farmScale * 0.85);
+                    nextGroup.add(cropClone);
+                  }
                 }
               });
             }
@@ -381,8 +387,19 @@ function FarmCanvas({
       }
 
       if (!mountedRef.current || !sceneRef.current) return;
+
+      const prevGroup = cropsGroupRef.current;
+      cropsGroupRef.current = nextGroup;
+      sceneRef.current.add(nextGroup);
       lastCropsKeyRef.current = cropsKey;
-      pendingGroupRef.current = nextGroup;
+
+      if (prevGroup) {
+        sceneRef.current.remove(prevGroup);
+        // 작물마다 복사한 geometry는 직접 지워야 메모리가 안 쌓임 (material은 원본과 공유라 그대로 둠)
+        prevGroup.traverse((child) => {
+          if (child.isMesh) child.geometry?.dispose();
+        });
+      }
     } catch (err) {
       console.log('❌ updateCrops 에러:', err?.message);
     } finally {
@@ -444,6 +461,14 @@ function FarmCanvas({
       scene.add(clonedFarm);
       farmModelRef.current = clonedFarm;
 
+      const barn =
+        clonedFarm.getObjectByName(THREE.PropertyBinding.sanitizeNodeName(BARN_NODE_NAME)) ??
+        clonedFarm.getObjectByName(BARN_NODE_NAME);
+      if (!barn) console.log('창고 오브젝트를 찾지 못했어요:', BARN_NODE_NAME);
+      barnBoxRef.current = barn
+        ? new THREE.Box3().setFromObject(barn).expandByScalar(BARN_HIT_PADDING)
+        : null;
+
       const plotMeshes = [];
       clonedFarm.traverse((child) => {
         if (child.isMesh) {
@@ -471,12 +496,6 @@ function FarmCanvas({
 
       await updateCrops();
       if (!mountedRef.current) return;
-      if (pendingGroupRef.current) {
-        const nextGroup = pendingGroupRef.current;
-        pendingGroupRef.current = null;
-        cropsGroupRef.current = nextGroup;
-        scene.add(nextGroup);
-      }
       isSceneReadyRef.current = true;
 
       const currentSelected = selectedPlotIndexRef.current;
@@ -496,6 +515,7 @@ function FarmCanvas({
                 mat.emissiveIntensity = 0.9;
               }
             }
+            mat.needsUpdate = true;
           };
           if (Array.isArray(mesh.material)) {
             mesh.material.forEach(applyInitSelection);
@@ -505,26 +525,13 @@ function FarmCanvas({
         });
       }
 
-      let lastRenderTime = 0;
-      const render = (now = 0) => {
+      const render = () => {
         if (!mountedRef.current || !activeRef.current) {
           animationRef.current = null;
           return;
         }
         animationRef.current = requestAnimationFrame(render);
-        if (now - lastRenderTime < 32) return;
-        lastRenderTime = now;
         try {
-          if (pendingGroupRef.current && sceneRef.current) {
-            const nextGroup = pendingGroupRef.current;
-            pendingGroupRef.current = null;
-            const prevGroup = cropsGroupRef.current;
-            cropsGroupRef.current = nextGroup;
-            sceneRef.current.add(nextGroup);
-            if (prevGroup) {
-              sceneRef.current.remove(prevGroup);
-            }
-          }
           renderer.render(scene, camera);
           gl.endFrameEXP();
         } catch (renderErr) {
@@ -542,29 +549,44 @@ function FarmCanvas({
     <View
       style={styles.glView}
       onLayout={(e) => { layoutRef.current = e.nativeEvent.layout; }}
-      onStartShouldSetResponder={() => !!onSelectPlot}
+      onStartShouldSetResponder={() => !!(onSelectPlot || onPressBarn || onPressBackground)}
       onResponderGrant={(e) => {
         touchStartRef.current = { x: e.nativeEvent.locationX, y: e.nativeEvent.locationY, time: Date.now() };
       }}
       onResponderRelease={(e) => {
-        if (!onSelectPlotRef.current || !touchStartRef.current) return;
+        if (!touchStartRef.current) return;
         const { locationX, locationY } = e.nativeEvent;
         const camera = cameraRef.current;
         const plotMeshes = plotMeshesRef.current;
         const { width, height } = layoutRef.current;
-        if (!camera || !width || !height) return;
+
+        if (!camera || !width || !height) {
+          onPressBackground?.();
+          return;
+        }
 
         const mouse = new THREE.Vector2((locationX / width) * 2 - 1, -(locationY / height) * 2 + 1);
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(mouse, camera);
 
-        if (plotMeshes.length > 0) {
+        // 창고 → 밭 → 나머지 순서로 확인
+        if (onPressBarn && barnBoxRef.current && raycaster.ray.intersectsBox(barnBoxRef.current)) {
+          onPressBarn();
+          return;
+        }
+
+        if (onSelectPlotRef.current && plotMeshes.length > 0) {
           const hits = raycaster.intersectObjects(plotMeshes, true);
           if (hits.length > 0) {
             const pIdx = hits[0].object.userData?.plotIndex ?? hits[0].object.parent?.userData?.plotIndex;
-            if (pIdx !== undefined) onSelectPlotRef.current(pIdx);
+            if (pIdx !== undefined) {
+              onSelectPlotRef.current(pIdx);
+              return;
+            }
           }
         }
+
+        onPressBackground?.();
       }}
     >
       <GLView style={styles.glView} onContextCreate={onContextCreate} />
@@ -575,4 +597,4 @@ function FarmCanvas({
 const styles = StyleSheet.create({
   container: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%', backgroundColor: '#F5F1E8' },
   glView: { width: '100%', height: '100%' },
-});
+});
