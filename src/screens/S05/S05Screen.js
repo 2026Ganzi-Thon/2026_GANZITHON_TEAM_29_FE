@@ -14,6 +14,7 @@ import { commonStyles } from '../../styles/commonStyles';
 import { supabase } from '../../utils/supabase';
 
 import FarmScene3D from '../../components/farm/FarmScene3D';
+import CropPreview3D from '../../components/farm/CropPreview3D';
 
 const { height: SCREEN_HEIGHT } = Dimensions.get('window');
 
@@ -98,7 +99,6 @@ export default function S05Screen({ route, navigation }) {
 
   const handleStartFocus = () => {
     if (!selectedCrop) return;
-    // 키우기 화면 밑에는 농장(S03)만 남겨서, 뒤로 가면 작물 고르기가 아니라 농장으로 가게 함
     navigation.reset({
       index: 1,
       routes: [
@@ -172,7 +172,7 @@ export default function S05Screen({ route, navigation }) {
                   style={[styles.cropCard, isSelected && styles.selectedCard]}
                   onPress={() => setSelectedCrop(item)}
                 >
-                  <View style={styles.cropIconPlaceholder} />
+                  <CropPreview3D cropName={item.name} style={styles.cropIcon3D} />
                   <Text style={styles.cropName}>{item.name}</Text>
                   <Text style={styles.cropTime}>{minutes}분</Text>
                   {item.recommended && (
@@ -299,12 +299,10 @@ const styles = StyleSheet.create({
     borderWidth: 2.5,
     backgroundColor: COLORS.white,
   },
-  cropIconPlaceholder: {
-    width: 36,
-    height: 36,
-    borderRadius: 18,
-    backgroundColor: '#EAEAEA',
-    marginBottom: 8,
+  cropIcon3D: {
+    width: 48,
+    height: 48,
+    marginBottom: 6,
   },
   cropName: {
     fontSize: FONTS.size.body - 1,

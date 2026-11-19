@@ -13,16 +13,59 @@ import { commonStyles } from '../../styles/commonStyles';
 import { supabase } from '../../utils/supabase';
 
 import FarmScene3D from '../../components/farm/FarmScene3D';
+import SeedBagScene3D from '../../components/farm/seedbag';
+
+function calculateStageFromProgress(progressValue) {
+  const p = Number(progressValue) || 0;
+  if (p >= 100) return 5;
+  if (p >= 80) return 4;
+  if (p >= 50) return 3;
+  if (p >= 20) return 2;
+  return 1;
+}
+
+function resolvePlotStage(serverPlot, fallbackProgress = 0) {
+  if (!serverPlot) return calculateStageFromProgress(fallbackProgress);
+  if (serverPlot.farm_status === 'ripe') return 5;
+
+  if (serverPlot.progress !== undefined && serverPlot.progress !== null) {
+    return calculateStageFromProgress(serverPlot.progress);
+  }
+  if (serverPlot.progress_percent !== undefined && serverPlot.progress_percent !== null) {
+    return calculateStageFromProgress(serverPlot.progress_percent);
+  }
+
+  const targetSec = Number(serverPlot.target_seconds || 0);
+  if (targetSec > 0) {
+    if (serverPlot.remaining_seconds !== undefined && serverPlot.remaining_seconds !== null) {
+      const remSec = Math.max(0, Math.min(targetSec, Number(serverPlot.remaining_seconds)));
+      const elapsedSec = targetSec - remSec;
+      const progress = Math.min(100, Math.max(0, Math.floor((elapsedSec / targetSec) * 100)));
+      return calculateStageFromProgress(progress);
+    }
+
+    const elapsedSec = Number(serverPlot.focused_seconds ?? serverPlot.elapsed_seconds ?? 0);
+    if (elapsedSec > 0) {
+      const progress = Math.min(100, Math.max(0, Math.floor((elapsedSec / targetSec) * 100)));
+      return calculateStageFromProgress(progress);
+    }
+  }
+
+  return calculateStageFromProgress(fallbackProgress);
+}
 
 export default function S09Screen({ route, navigation }) {
   const { sessionId, previewData, plotIndex } = route.params || {};
+
+  const initialPreviewProgress =
+    previewData?.progress ?? previewData?.progress_percent ?? 0;
 
   const [loading, setLoading] = useState(false);
   const [plotsData, setPlotsData] = useState([]);
   const [stopInfo, setStopInfo] = useState({
     focusMinutes: previewData?.focusMinutes ?? previewData?.focus_minutes ?? 0,
     focusSeconds: previewData?.focusSeconds ?? previewData?.focus_seconds ?? 0,
-    progress: previewData?.progress ?? 0,
+    progress: initialPreviewProgress,
     result: previewData?.result ?? 'SEED',
     // preview_stop_focus가 주는 확정용 토큰 (confirm/cancel_stop_focus에 씀)
     stopToken: previewData?.stop_token ?? null,
@@ -35,22 +78,14 @@ export default function S09Screen({ route, navigation }) {
 
   const fetchFarmAndPreviewData = async () => {
     try {
-      const { data: farmData } = await supabase.rpc('get_my_farm');
-      if (farmData) {
-        const formattedPlots = Array.from({ length: 12 }, (_, index) => {
-          const serverPlot = farmData.find(item => item.plot_index === index + 1);
-          return {
-            id: index,
-            plotIndex: index,
-            plotId: serverPlot?.plot_id || null,
-            farmStatus: serverPlot?.farm_status || 'empty',
-            cropName: serverPlot?.crop_name || '작물',
-          };
-        });
-        setPlotsData(formattedPlots);
-      }
+      let resolvedPreview = {
+        focusMinutes: previewData?.focusMinutes ?? previewData?.focus_minutes ?? 0,
+        focusSeconds: previewData?.focusSeconds ?? previewData?.focus_seconds ?? 0,
+        progress: initialPreviewProgress,
+        result: previewData?.result ?? 'SEED',
+        stopToken: previewData?.stop_token ?? null,
+      };
 
-    
       if (!previewData?.stop_token && isServerSession) {
         setLoading(true);
         const { data, error } = await supabase.rpc('preview_stop_focus', {
@@ -58,14 +93,33 @@ export default function S09Screen({ route, navigation }) {
         });
 
         if (!error && data) {
-          setStopInfo({
+          resolvedPreview = {
             focusMinutes: data.focus_minutes ?? 0,
             focusSeconds: data.focused_seconds ?? 0,
-            progress: data.progress_percent ?? 0,
+            progress: data.progress_percent ?? data.progress ?? 0,
             result: data.result ?? 'seed',
             stopToken: data.stop_token ?? null,
-          });
+          };
+          setStopInfo(resolvedPreview);
         }
+      }
+
+      const { data: farmData } = await supabase.rpc('get_my_farm');
+      if (farmData) {
+        const formattedPlots = Array.from({ length: 12 }, (_, index) => {
+          const serverPlot = farmData.find(item => item.plot_index === index + 1);
+          const fallbackProg = index === plotIndex ? resolvedPreview.progress : 0;
+
+          return {
+            id: index,
+            plotIndex: index,
+            plotId: serverPlot?.plot_id || null,
+            farmStatus: serverPlot?.farm_status || 'empty',
+            cropName: serverPlot?.crop_name || '작물',
+            stage: resolvePlotStage(serverPlot, fallbackProg),
+          };
+        });
+        setPlotsData(formattedPlots);
       }
     } catch (error) {
       console.error('S09 데이터 로드 실패:', error.message);
@@ -118,8 +172,8 @@ export default function S09Screen({ route, navigation }) {
     <View style={commonStyles.screen}>
       <View style={styles.farmBackground}>
         <FarmScene3D
-          cameraPos={[0, 5.0, 5.8]}
-          modelOffsetY={0.4}
+          cameraPos={[0, 7, 7.5]}
+          modelOffsetY={1.6}
           plotsData={plotsData}
           selectedPlotIndex={plotIndex ?? null}
         />
@@ -132,7 +186,7 @@ export default function S09Screen({ route, navigation }) {
           <Text style={styles.title}>오늘은 여기까지 할까요?</Text>
 
           <View style={styles.seedPouchBox}>
-            <Text style={styles.seedPouchText}>씨앗 주머니</Text>
+            <SeedBagScene3D />
           </View>
 
           {loading ? (
@@ -193,7 +247,7 @@ const styles = StyleSheet.create({
     borderTopLeftRadius: 28,
     borderTopRightRadius: 28,
     paddingHorizontal: 20,
-    paddingTop: 28,
+    paddingTop: 24,
     paddingBottom: 36,
     alignItems: 'center',
     elevation: 10,
@@ -206,25 +260,21 @@ const styles = StyleSheet.create({
     fontSize: FONTS.size.title || 20,
     fontWeight: FONTS.weight.bold,
     color: COLORS.black,
-    marginBottom: 20,
+    marginBottom: 12,
   },
   seedPouchBox: {
-    width: 110,
-    height: 110,
-    borderRadius: 16,
-    backgroundColor: '#E5E5E5',
+    width: 120,
+    height: 120,
+    backgroundColor: 'transparent',
     justifyContent: 'center',
     alignItems: 'center',
-    marginBottom: 20,
-  },
-  seedPouchText: {
-    fontSize: FONTS.size.body - 1,
-    color: COLORS.graytext || '#767676',
-    fontWeight: FONTS.weight.medium,
+    marginTop: -8,
+    marginBottom: 14,
+    transform: [{ translateY: -10 }],
   },
   descriptionContainer: {
     alignItems: 'center',
-    marginBottom: 28,
+    marginBottom: 24,
   },
   descMain: {
     fontSize: FONTS.size.body,
