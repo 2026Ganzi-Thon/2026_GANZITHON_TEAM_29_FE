@@ -17,9 +17,9 @@ import SeedBagScene3D from '../../components/farm/seedbag';
 
 function calculateStageFromProgress(progressValue) {
   const p = Number(progressValue) || 0;
-  if (p >= 80) return 5;
-  if (p >= 60) return 4;
-  if (p >= 40) return 3;
+  if (p >= 100) return 5;
+  if (p >= 80) return 4;
+  if (p >= 50) return 3;
   if (p >= 20) return 2;
   return 1;
 }

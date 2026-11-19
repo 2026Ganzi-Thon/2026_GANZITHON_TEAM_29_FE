@@ -7,7 +7,6 @@ import {
   ActivityIndicator,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
-import { BlurView } from 'expo-blur';
 import { COLORS } from '../../styles/colors';
 import { FONTS } from '../../styles/fonts';
 import { commonStyles } from '../../styles/commonStyles';
@@ -16,9 +15,9 @@ import { supabase } from '../../utils/supabase';
 import FarmScene3D from '../../components/farm/FarmScene3D';
 
 function calculateStageFromProgress(progressValue) {
-  if (progressValue >= 80) return 5;
-  if (progressValue >= 60) return 4;
-  if (progressValue >= 40) return 3;
+  if (progressValue >= 100) return 5;
+  if (progressValue >= 80) return 4;
+  if (progressValue >= 50) return 3;
   if (progressValue >= 20) return 2;
   return 1;
 }
@@ -141,7 +140,6 @@ export default function S07Screen({ route, navigation }) {
         }
       }
 
-      // targetSeconds가 아직 없는데 route에 있으면 반영
       if (!syncedTarget && routeTargetSeconds) {
         syncedTarget = Math.max(1, Number(routeTargetSeconds));
         setTargetSeconds(syncedTarget);
@@ -153,7 +151,6 @@ export default function S07Screen({ route, navigation }) {
     }
   };
 
-  // remainingSeconds나 targetSeconds가 갱신될 때 현재 밭의 stage도 S06과 동일하게 동기화
   useEffect(() => {
     if (plotsData.length === 0) return;
     const progress = calculateProgressFromTimes(remainingSeconds, targetSeconds);
@@ -238,13 +235,7 @@ export default function S07Screen({ route, navigation }) {
           modelOffsetY={0.5}
           plotsData={plotsData}
           selectedPlotIndex={plotIndex}
-          blurred={true}
-        />
-        <BlurView
-          intensity={80}
-          tint="light"
-          experimentalBlurMethod="dimezisBlurView"
-          style={styles.blurLayer}
+          opacity={0.7}
         />
         <View style={styles.pausedOverlay} />
       </View>
@@ -289,18 +280,14 @@ const styles = StyleSheet.create({
     height: '100%',
     zIndex: 0,
   },
-  blurLayer: {
-    ...StyleSheet.absoluteFillObject,
-    zIndex: 1,
-  },
   pausedOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.45)',
-    zIndex: 2,
+    backgroundColor: 'rgba(245, 241, 232, 0.55)',
+    zIndex: 1,
   },
   container: {
     flex: 1,
-    zIndex: 3,
+    zIndex: 2,
     justifyContent: 'flex-end',
     backgroundColor: 'transparent',
   },

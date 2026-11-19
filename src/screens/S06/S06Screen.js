@@ -128,9 +128,9 @@ export default function S06Screen({ route, navigation }) {
   }, []);
 
   const calculateStageFromProgress = (progressValue) => {
-    if (progressValue >= 80) return 5;
-    if (progressValue >= 60) return 4;
-    if (progressValue >= 40) return 3;
+    if (progressValue >= 100) return 5;
+    if (progressValue >= 80) return 4;
+    if (progressValue >= 50) return 3;
     if (progressValue >= 20) return 2;
     return 1;
   };

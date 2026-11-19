@@ -24,10 +24,11 @@ const CROP_SEED_RATIO = 0.45;
 const CROP_PLANT_RATIO = 0.7;
 // 테두리 윗면보다 살짝 아래(흙 높이)에 놓기
 const CROP_SINK_RATIO = 0.18;
-const CROP_SEED_SINK_RATIO = 0.285;
+const CROP_SEED_SINK_RATIO = 0.3;
 
 // 밭 한 칸 터치 인식 반경 배율 (1.0 = 칸 크기 기준, 살짝 넉넉하게 1.15)
-const PLOT_TOUCH_RADIUS_RATIO = 1.15;
+const PLOT_TOUCH_RADIUS_RATIO = 2;
+
 
 const CROP_MESH_MAP = {
   '새싹채소_새싹': 'cartoon_vegetables_3d_model001',
@@ -228,12 +229,13 @@ export default function FarmScene3D({
   onSelectPlot,
   onPressBackground,
   blurred = false,
+  opacity = 1,
 }) {
   const isFocused = useIsFocused();
   const settings = useSettings();
 
   return (
-    <View style={[styles.container, { backgroundColor: `#${backgroundColor.toString(16).padStart(6, '0')}` }]}>
+    <View style={[styles.container, { backgroundColor: `#${backgroundColor.toString(16).padStart(6, '0')}`, opacity }]}>
       <FarmCanvas
         backgroundColor={backgroundColor}
         visibleWidth={visibleWidth}
@@ -247,6 +249,7 @@ export default function FarmScene3D({
         onPressBackground={onPressBackground}
         active={isFocused}
         blurred={blurred}
+        opacity={opacity}
       />
     </View>
   );
@@ -555,9 +558,9 @@ function FarmCanvas({
         };
 
         // 테두리 + 안쪽 밭 전체를 덮는 히트 박스 (어디를 눌러도 같은 칸으로 인식)
-        const boxW = Math.max(size.x, 0.4);
-        const boxD = Math.max(size.z, 0.4);
-        const boxH = Math.max(size.y, 0.25);
+        const boxW = Math.max(size.x * 1.35, 0.55);
+        const boxD = Math.max(size.z * 1.35, 0.55);
+        const boxH = Math.max(size.y, 0.4);
         const hitGeo = new THREE.BoxGeometry(boxW, boxH, boxD);
         const hitMesh = new THREE.Mesh(hitGeo, hitMat);
         hitMesh.position.set(c.x, c.y, c.z);
@@ -651,6 +654,7 @@ function FarmCanvas({
           onPressBarn();
           return;
         }
+        console.log('터치 좌표:', { locationX, locationY, width, height }, 'hitMesh 개수:', hitMeshes.length, 'plotCenters 개수:', plotCenters.filter(Boolean).length);
 
         if (onSelectPlotRef.current) {
           if (hitMeshes.length > 0) {
@@ -678,7 +682,7 @@ function FarmCanvas({
                 const dx = hitPoint.x - center.x;
                 const dz = hitPoint.z - center.z;
                 const distSq = dx * dx + dz * dz;
-                const radius = center.touchRadius || 0.45;
+                const radius = (center.touchRadius || 0.5) * 1.25;
                 if (distSq <= radius * radius && distSq < bestDistSq) {
                   bestDistSq = distSq;
                   bestIdx = idx;
