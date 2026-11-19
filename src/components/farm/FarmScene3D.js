@@ -219,6 +219,7 @@ function FarmCanvas({
   const farmModelRef = useRef(null);
   const cropsGroupRef = useRef(null);
   const pendingGroupRef = useRef(null);
+  const lastCropsKeyRef = useRef(null);
   const plotMeshesRef = useRef([]);
   const plotCentersRef = useRef([]);
   const layoutRef = useRef({ width: 0, height: 0 });
@@ -320,6 +321,14 @@ function FarmCanvas({
     try {
       if (!sceneRef.current || !farmModelRef.current || !mountedRef.current) return;
 
+      const cropsKey = (plotsDataRef.current || [])
+        .map((plot) => {
+          const pIndex = plot.plotIndex !== undefined ? plot.plotIndex : plot.id;
+          return `${pIndex}:${plot.farmStatus}:${plot.cropName}:${plot.stage ?? 1}`;
+        })
+        .join('|');
+      if (cropsKey === lastCropsKeyRef.current) return;
+
       const cropsScene = await loadCropsModel();
       if (!mountedRef.current || !sceneRef.current || !farmModelRef.current) return;
 
@@ -372,6 +381,7 @@ function FarmCanvas({
       }
 
       if (!mountedRef.current || !sceneRef.current) return;
+      lastCropsKeyRef.current = cropsKey;
       pendingGroupRef.current = nextGroup;
     } catch (err) {
       console.log('❌ updateCrops 에러:', err?.message);
@@ -398,7 +408,7 @@ function FarmCanvas({
       renderer.setClearColor(backgroundColor, 1);
       renderer.outputEncoding = THREE.sRGBEncoding;
       renderer.toneMapping = THREE.ACESFilmicToneMapping;
-      renderer.toneMappingExposure = 1.0;
+      renderer.toneMappingExposure = 0.8;
 
       gl.viewport(0, 0, width, height);
 
@@ -421,8 +431,8 @@ function FarmCanvas({
       camera.lookAt(0, 0, 0);
       cameraRef.current = camera;
 
-      scene.add(new THREE.AmbientLight(0xffffff, 1.5));
-      const light = new THREE.DirectionalLight(0xffffff, 1.2);
+      scene.add(new THREE.AmbientLight(0xffffff, 0.8));
+      const light = new THREE.DirectionalLight(0xffffff, 0.7);
       light.position.set(5, 10, 7);
       scene.add(light);
 
