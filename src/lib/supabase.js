@@ -3,8 +3,8 @@ import 'expo-sqlite/localStorage/install';
 import { AppState } from 'react-native';
 import { createClient } from '@supabase/supabase-js';
 
-const supabaseUrl = process.env.EXPO_PUBLIC_SUPABASE_URL;
-const supabasePublishableKey = process.env.EXPO_PUBLIC_SUPABASE_PUBLISHABLE_KEY;
+const supabaseUrl = 'https://klanbfvywwudprunaqdf.supabase.co';
+const supabasePublishableKey = 'sb_publishable_BhYc2LCiC6QLv6bVUiyzlA_XP7sbz29';
 
 if (!supabaseUrl || !supabasePublishableKey) {
   throw new Error('Supabase 설정이 없어요. 프로젝트 폴더에 .env 파일이 있는지 확인해 주세요.');

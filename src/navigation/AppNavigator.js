@@ -30,7 +30,7 @@ import S19Screen from '../screens/S19/S19Screen';
 const Stack = createNativeStackNavigator();
 
 // 개발할 때 특정 화면부터 보고 싶으면 화면 이름을 넣기 (예: 'S10'). 커밋할 땐 null
-const DEV_START_SCREEN = 'null';
+const DEV_START_SCREEN = null;
 
 export const navigationRef = createNavigationContainerRef();
 
