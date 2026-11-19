@@ -109,7 +109,6 @@ function safeConfigureMaterial(mat) {
     mat.map.encoding = THREE.sRGBEncoding;
     mat.map.flipY = false;
   }
-  mat.needsUpdate = true;
   return mat;
 }
 
@@ -169,6 +168,9 @@ async function loadCropsModel() {
             child.material.forEach(safeConfigureMaterial);
           } else if (child.material) {
             safeConfigureMaterial(child.material);
+          }
+          if (child.geometry && !child.geometry.boundingBox) {
+            child.geometry.computeBoundingBox();
           }
         }
       });
@@ -234,6 +236,7 @@ function FarmCanvas({
   const sceneRef = useRef(null);
   const farmModelRef = useRef(null);
   const cropsGroupRef = useRef(null);
+  const pendingGroupRef = useRef(null);
   const lastCropsKeyRef = useRef(null);
   const plotMeshesRef = useRef([]);
   const plotCentersRef = useRef([]);
@@ -242,6 +245,7 @@ function FarmCanvas({
   const isSceneReadyRef = useRef(false);
   const isUpdatingRef = useRef(false);
   const pendingUpdateRef = useRef(false);
+  const lastPlotsSignatureRef = useRef('');
 
   const selectedPlotIndexRef = useRef(selectedPlotIndex);
   const onSelectPlotRef = useRef(onSelectPlot);
@@ -253,6 +257,17 @@ function FarmCanvas({
 
   useEffect(() => {
     plotsDataRef.current = plotsData;
+    const sig = JSON.stringify(
+      (plotsData || []).map((p) => [
+        p.plotIndex ?? p.id,
+        p.cropName || '',
+        p.stage ?? 1,
+        p.farmStatus || '',
+      ])
+    );
+    if (sig === lastPlotsSignatureRef.current) return;
+    lastPlotsSignatureRef.current = sig;
+
     if (isSceneReadyRef.current && sceneRef.current && farmModelRef.current) {
       updateCrops();
     }
@@ -292,7 +307,6 @@ function FarmCanvas({
             mat.emissiveIntensity = 0;
           }
         }
-        mat.needsUpdate = true;
       };
 
       if (Array.isArray(mesh.material)) {
@@ -359,38 +373,33 @@ function FarmCanvas({
             if (targetMeshName) {
               cropsScene.traverse((child) => {
                 if (child.isMesh && child.name === targetMeshName && child.geometry) {
-                  const cropClone = child.clone(false);
-                  cropClone.position.set(0, 0, 0);
-                  cropClone.rotation.set(0, 0, 0);
-                  cropClone.scale.set(1, 1, 1);
-
-                  const centeredGeo = child.geometry.clone();
-                  centeredGeo.computeBoundingBox();
-                  const box = centeredGeo.boundingBox;
-                  if (box) {
-                    const meshCenter = new THREE.Vector3();
-                    box.getCenter(meshCenter);
-                    centeredGeo.translate(-meshCenter.x, -box.min.y, -meshCenter.z);
-                  }
-                  cropClone.geometry = centeredGeo;
-
+                  const box = child.geometry.boundingBox;
                   const plotCenter = plotCentersRef.current[pIndex];
-                  if (plotCenter && box) {
-                    // 작물 모델마다 원래 크기가 달라서, 밭 한 칸 크기에 맞춰 키움
-                    const cropSize = new THREE.Vector3();
-                    box.getSize(cropSize);
-                    const footprint = Math.max(cropSize.x, cropSize.z) || 1;
-                    const ratio = stage === 1 ? CROP_SEED_RATIO : CROP_PLANT_RATIO;
-                    cropClone.scale.setScalar((plotCenter.width * ratio) / footprint);
+                  if (!box || !plotCenter) return;
 
-                    // 밭 흙 위에 올림 (밭 위치에는 이미 modelOffsetY가 들어 있음)
-                    cropClone.position.set(
-                      plotCenter.x,
-                      plotCenter.y - plotCenter.width * CROP_SINK_RATIO,
-                      plotCenter.z
-                    );
-                    nextGroup.add(cropClone);
-                  }
+                  // 작물 모델마다 원래 크기가 달라서, 밭 한 칸 크기에 맞춰 키움
+                  const cropSize = new THREE.Vector3();
+                  box.getSize(cropSize);
+                  const footprint = Math.max(cropSize.x, cropSize.z) || 1;
+                  const ratio = stage === 1 ? CROP_SEED_RATIO : CROP_PLANT_RATIO;
+
+                  // 밭 흙 위에 올림 (밭 위치에는 이미 modelOffsetY가 들어 있음)
+                  const pivot = new THREE.Group();
+                  pivot.position.set(
+                    plotCenter.x,
+                    plotCenter.y - plotCenter.width * CROP_SINK_RATIO,
+                    plotCenter.z
+                  );
+                  pivot.scale.setScalar((plotCenter.width * ratio) / footprint);
+
+                  // geometry는 원본과 공유 (복사하지 않아서 지울 필요 없음)
+                  const meshNode = new THREE.Mesh(child.geometry, child.material);
+                  const center = new THREE.Vector3();
+                  box.getCenter(center);
+                  meshNode.position.set(-center.x, -box.min.y, -center.z);
+
+                  pivot.add(meshNode);
+                  nextGroup.add(pivot);
                 }
               });
             }
@@ -400,18 +409,9 @@ function FarmCanvas({
 
       if (!mountedRef.current || !sceneRef.current) return;
 
-      const prevGroup = cropsGroupRef.current;
-      cropsGroupRef.current = nextGroup;
-      sceneRef.current.add(nextGroup);
       lastCropsKeyRef.current = cropsKey;
-
-      if (prevGroup) {
-        sceneRef.current.remove(prevGroup);
-        // 작물마다 복사한 geometry는 직접 지워야 메모리가 안 쌓임 (material은 원본과 공유라 그대로 둠)
-        prevGroup.traverse((child) => {
-          if (child.isMesh) child.geometry?.dispose();
-        });
-      }
+      // 실제 교체는 렌더 루프에서 (그리는 도중에 장면이 바뀌지 않게)
+      pendingGroupRef.current = nextGroup;
     } catch (err) {
       console.log('❌ updateCrops 에러:', err?.message);
     } finally {
@@ -511,6 +511,12 @@ function FarmCanvas({
 
       await updateCrops();
       if (!mountedRef.current) return;
+      if (pendingGroupRef.current) {
+        const nextGroup = pendingGroupRef.current;
+        pendingGroupRef.current = null;
+        cropsGroupRef.current = nextGroup;
+        scene.add(nextGroup);
+      }
       isSceneReadyRef.current = true;
       // 준비하는 동안 plotsData가 바뀌었으면 여기서 반영 (같으면 아무것도 안 함)
       updateCrops();
@@ -532,7 +538,6 @@ function FarmCanvas({
                 mat.emissiveIntensity = 0.9;
               }
             }
-            mat.needsUpdate = true;
           };
           if (Array.isArray(mesh.material)) {
             mesh.material.forEach(applyInitSelection);
@@ -542,13 +547,24 @@ function FarmCanvas({
         });
       }
 
-      const render = () => {
+      let lastRenderTime = 0;
+      const render = (now = 0) => {
         if (!mountedRef.current || !activeRef.current) {
           animationRef.current = null;
           return;
         }
         animationRef.current = requestAnimationFrame(render);
+        if (now - lastRenderTime < 32) return;
+        lastRenderTime = now;
         try {
+          if (pendingGroupRef.current && sceneRef.current) {
+            const nextGroup = pendingGroupRef.current;
+            pendingGroupRef.current = null;
+            const prevGroup = cropsGroupRef.current;
+            cropsGroupRef.current = nextGroup;
+            sceneRef.current.add(nextGroup);
+            if (prevGroup) sceneRef.current.remove(prevGroup);
+          }
           renderer.render(scene, camera);
           gl.endFrameEXP();
         } catch (renderErr) {
