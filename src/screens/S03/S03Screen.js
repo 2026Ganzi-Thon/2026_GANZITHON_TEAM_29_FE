@@ -67,7 +67,7 @@ export default function S03Screen({ navigation }) {
       setLoading(true);
 
       const { data, error } = await supabase.rpc('get_my_farm');
-      
+
       const farmList = error ? [] : (data || []);
 
       const formattedPlots = Array.from({ length: 12 }, (_, index) => {
@@ -115,7 +115,7 @@ export default function S03Screen({ navigation }) {
 
     } catch (error) {
       console.error('S03 데이터 초기화 실패:', error.message);
-      
+
       const fallbackPlots = Array.from({ length: 12 }, (_, index) => ({
         id: index,
         plotIndex: index,
@@ -134,10 +134,15 @@ export default function S03Screen({ navigation }) {
     setSelectedPlot(plotIndex);
 
     const targetPlot = plotsData.find(p => p.plotIndex === plotIndex);
-    const growingPlot = plotsData.find(p => p.farmStatus === 'growing');
 
-    // 서버는 한 번에 한 작물만 키울 수 있음
-    if ((!targetPlot || targetPlot.farmStatus === 'empty') && growingPlot) {
+    // 실제로 진행 중인 세션이 있을 때만 빈 밭 새 파종 차단 (다 키운 'ripe' 밭은 허용)
+    const hasActiveSession = plotsData.some(
+      p =>
+        p.farmStatus === 'growing' &&
+        (p.sessionStatus === 'active' || p.sessionStatus === 'paused')
+    );
+
+    if ((!targetPlot || targetPlot.farmStatus === 'empty') && hasActiveSession) {
       setSelectedPlot(null);
       setNotice('한 번에 하나만 키울 수 있어요');
       return;
@@ -146,7 +151,7 @@ export default function S03Screen({ navigation }) {
     if (!targetPlot || targetPlot.farmStatus === 'empty') {
       setTimeout(() => {
         navigation.navigate('S04', { plotIndex: plotIndex });
-      }, 150); 
+      }, 150);
     } else if (targetPlot.farmStatus === 'ripe') {
       setTimeout(() => {
         navigation.navigate('S17', {
@@ -156,16 +161,7 @@ export default function S03Screen({ navigation }) {
           sessionId: targetPlot.sessionId,
         });
       }, 150);
-    } else if (targetPlot.sessionStatus === 'paused') {
-      setTimeout(() => {
-        navigation.navigate('S07', {
-          plotIndex: plotIndex,
-          sessionId: targetPlot.sessionId,
-          cropId: targetPlot.cropId,
-          cropName: targetPlot.cropName,
-        });
-      }, 150);
-    } else if (targetPlot.farmStatus === 'growing') {
+    } else if (targetPlot.farmStatus === 'growing' || targetPlot.sessionStatus === 'paused') {
       setTimeout(() => {
         navigation.navigate('S06', {
           plotIndex: plotIndex,
@@ -185,9 +181,9 @@ export default function S03Screen({ navigation }) {
   return (
     <View style={commonStyles.screen}>
       <View style={styles.farmBackground}>
-        <FarmScene3D 
-          cameraPos={[0, 6.0, 7.0]} 
-          modelOffsetY={-0.5} 
+        <FarmScene3D
+          cameraPos={[0, 6.0, 7.0]}
+          modelOffsetY={-0.7}
           plotsData={plotsData}
           selectedPlotIndex={selectedPlot}
           onSelectPlot={handleSelectPlot}
@@ -221,9 +217,9 @@ export default function S03Screen({ navigation }) {
 
         <View style={styles.middleSpacer} pointerEvents="none" />
 
-        <BottomNoticeToast 
-          message={notice} 
-          style={styles.toastStyle} 
+        <BottomNoticeToast
+          message={notice}
+          style={styles.toastStyle}
           onPress={() => {
             const firstEmpty = plotsData.find(p => p.farmStatus === 'empty');
             const targetPlotIndex = firstEmpty ? firstEmpty.plotIndex : 0;
@@ -260,13 +256,13 @@ const styles = StyleSheet.create({
     fontSize: FONTS.size.body - 1,
     color: COLORS.black,
     fontWeight: FONTS.weight.medium,
-    marginBottom: 20, 
+    marginBottom: 20,
   },
   headerTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20, 
+    marginBottom: 20,
   },
   brandTitle: {
     fontSize: FONTS.size.title - 2,

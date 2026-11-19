@@ -23,7 +23,8 @@ const BARN_HIT_PADDING = 0.1;
 const CROP_SEED_RATIO = 0.45;
 const CROP_PLANT_RATIO = 0.7;
 // 테두리 윗면보다 살짝 아래(흙 높이)에 놓기
-const CROP_SINK_RATIO = 0.08;
+const CROP_SINK_RATIO = 0.17;
+const CROP_SEED_SINK_RATIO = 0.285;
 
 const CROP_MESH_MAP = {
   '새싹채소_새싹': 'cartoon_vegetables_3d_model001',
@@ -110,6 +111,39 @@ function safeConfigureMaterial(mat) {
     mat.map.flipY = false;
   }
   return mat;
+}
+
+function applySelectionStyleToMesh(mesh, isSelected) {
+  if (!mesh?.material) return;
+
+  const applySelectionStyle = (mat) => {
+    if (!mat) return;
+    if (!mat.userData.originalColor) {
+      mat.userData.originalColor = mat.color ? mat.color.clone() : new THREE.Color(0xffffff);
+    }
+
+    if (isSelected) {
+      if (mat.color) mat.color.setHex(0xffea75);
+      if ('emissive' in mat) {
+        mat.emissive = new THREE.Color(0xfbfb36);
+        mat.emissiveIntensity = 0.9;
+      }
+    } else {
+      if (mat.color && mat.userData.originalColor) {
+        mat.color.copy(mat.userData.originalColor);
+      }
+      if ('emissive' in mat) {
+        mat.emissive = new THREE.Color(0x000000);
+        mat.emissiveIntensity = 0;
+      }
+    }
+  };
+
+  if (Array.isArray(mesh.material)) {
+    mesh.material.forEach(applySelectionStyle);
+  } else {
+    applySelectionStyle(mesh.material);
+  }
 }
 
 let farmModelPromise = null;
@@ -239,6 +273,7 @@ function FarmCanvas({
   const pendingGroupRef = useRef(null);
   const lastCropsKeyRef = useRef(null);
   const plotMeshesRef = useRef([]);
+  const borderMeshesRef = useRef([]);
   const plotCentersRef = useRef([]);
   const layoutRef = useRef({ width: 0, height: 0 });
   const touchStartRef = useRef(null);
@@ -280,40 +315,11 @@ function FarmCanvas({
     }
   }, [active]);
 
+  // 테두리(border_0~11)에만 하이라이트 적용
   useEffect(() => {
-    plotMeshesRef.current.forEach((mesh) => {
+    borderMeshesRef.current.forEach((mesh) => {
       const pIdx = mesh.userData.plotIndex;
-      if (!mesh.material) return;
-
-      const applySelectionStyle = (mat) => {
-        if (!mat) return;
-        if (!mat.userData.originalColor) {
-          mat.userData.originalColor = mat.color ? mat.color.clone() : new THREE.Color(0xffffff);
-        }
-
-        const isSelected = pIdx === selectedPlotIndex;
-        if (isSelected) {
-          if (mat.color) mat.color.setHex(0xffea75);
-          if ('emissive' in mat) {
-            mat.emissive = new THREE.Color(0xfbfb36);
-            mat.emissiveIntensity = 0.9;
-          }
-        } else {
-          if (mat.color && mat.userData.originalColor) {
-            mat.color.copy(mat.userData.originalColor);
-          }
-          if ('emissive' in mat) {
-            mat.emissive = new THREE.Color(0x000000);
-            mat.emissiveIntensity = 0;
-          }
-        }
-      };
-
-      if (Array.isArray(mesh.material)) {
-        mesh.material.forEach(applySelectionStyle);
-      } else {
-        applySelectionStyle(mesh.material);
-      }
+      applySelectionStyleToMesh(mesh, pIdx === selectedPlotIndex);
     });
   }, [selectedPlotIndex]);
 
@@ -382,12 +388,13 @@ function FarmCanvas({
                   box.getSize(cropSize);
                   const footprint = Math.max(cropSize.x, cropSize.z) || 1;
                   const ratio = stage === 1 ? CROP_SEED_RATIO : CROP_PLANT_RATIO;
+                  const sinkRatio = stage === 1 ? CROP_SEED_SINK_RATIO : CROP_SINK_RATIO;
 
                   // 밭 흙 위에 올림 (밭 위치에는 이미 modelOffsetY가 들어 있음)
                   const pivot = new THREE.Group();
                   pivot.position.set(
                     plotCenter.x,
-                    plotCenter.y - plotCenter.width * CROP_SINK_RATIO,
+                    plotCenter.y - plotCenter.width * sinkRatio,
                     plotCenter.z
                   );
                   pivot.scale.setScalar((plotCenter.width * ratio) / footprint);
@@ -486,17 +493,28 @@ function FarmCanvas({
         ? new THREE.Box3().setFromObject(barn).expandByScalar(BARN_HIT_PADDING)
         : null;
 
+      // 밭(plot_0~11): 작물 위치·크기·터치 기준 / 테두리(border_0~11): 선택 하이라이트 기준
       const plotMeshes = [];
+      const borderMeshes = [];
       clonedFarm.traverse((child) => {
         if (child.isMesh) {
-          const match = (child.name || child.parent?.name || '').match(/plot_(\d+)/i);
-          if (match) {
-            child.userData.plotIndex = parseInt(match[1], 10);
+          const targetName = child.name || child.parent?.name || '';
+          const plotMatch = targetName.match(/plot_(\d+)/i);
+          if (plotMatch) {
+            child.userData.plotIndex = parseInt(plotMatch[1], 10);
             plotMeshes.push(child);
+            return;
+          }
+
+          const borderMatch = targetName.match(/border_(\d+)/i);
+          if (borderMatch) {
+            child.userData.plotIndex = parseInt(borderMatch[1], 10);
+            borderMeshes.push(child);
           }
         }
       });
       plotMeshesRef.current = plotMeshes;
+      borderMeshesRef.current = borderMeshes;
 
       const plotCenters = [];
       for (let i = 0; i < 12; i++) {
@@ -508,7 +526,7 @@ function FarmCanvas({
           box.getCenter(c);
           const size = new THREE.Vector3();
           box.getSize(size);
-          // x, z: 밭 가운데 / y: 밭 테두리 윗면 / width: 밭 한 칸 크기
+          // x, z: 밭 가운데 / y: 밭 윗면 / width: 밭 한 칸 크기
           plotCenters[i] = { x: c.x, y: box.max.y, z: c.z, width: Math.min(size.x, size.z) };
         }
       }
@@ -528,26 +546,10 @@ function FarmCanvas({
 
       const currentSelected = selectedPlotIndexRef.current;
       if (currentSelected !== null && currentSelected !== undefined) {
-        plotMeshes.forEach((mesh) => {
+        borderMeshes.forEach((mesh) => {
           const pIdx = mesh.userData.plotIndex;
-          if (!mesh.material) return;
-          const applyInitSelection = (mat) => {
-            if (!mat) return;
-            if (!mat.userData.originalColor) {
-              mat.userData.originalColor = mat.color ? mat.color.clone() : new THREE.Color(0xffffff);
-            }
-            if (pIdx === currentSelected) {
-              if (mat.color) mat.color.setHex(0xffea75);
-              if ('emissive' in mat) {
-                mat.emissive = new THREE.Color(0xfbfb36);
-                mat.emissiveIntensity = 0.9;
-              }
-            }
-          };
-          if (Array.isArray(mesh.material)) {
-            mesh.material.forEach(applyInitSelection);
-          } else {
-            applyInitSelection(mesh.material);
+          if (pIdx === currentSelected) {
+            applySelectionStyleToMesh(mesh, true);
           }
         });
       }
@@ -596,6 +598,7 @@ function FarmCanvas({
         const { locationX, locationY } = e.nativeEvent;
         const camera = cameraRef.current;
         const plotMeshes = plotMeshesRef.current;
+        const borderMeshes = borderMeshesRef.current;
         const { width, height } = layoutRef.current;
 
         if (!camera || !width || !height) {
@@ -607,14 +610,15 @@ function FarmCanvas({
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(mouse, camera);
 
-        // 창고 → 밭 → 나머지 순서로 확인
+        // 창고 → 밭/테두리 → 나머지 순서로 확인
         if (onPressBarn && barnBoxRef.current && raycaster.ray.intersectsBox(barnBoxRef.current)) {
           onPressBarn();
           return;
         }
 
-        if (onSelectPlotRef.current && plotMeshes.length > 0) {
-          const hits = raycaster.intersectObjects(plotMeshes, true);
+        const selectableMeshes = [...plotMeshes, ...borderMeshes];
+        if (onSelectPlotRef.current && selectableMeshes.length > 0) {
+          const hits = raycaster.intersectObjects(selectableMeshes, true);
           if (hits.length > 0) {
             const pIdx = hits[0].object.userData?.plotIndex ?? hits[0].object.parent?.userData?.plotIndex;
             if (pIdx !== undefined) {
@@ -635,4 +639,4 @@ function FarmCanvas({
 const styles = StyleSheet.create({
   container: { position: 'absolute', top: 0, left: 0, right: 0, bottom: 0, width: '100%', height: '100%', backgroundColor: '#F5F1E8' },
   glView: { width: '100%', height: '100%' },
-});
+});

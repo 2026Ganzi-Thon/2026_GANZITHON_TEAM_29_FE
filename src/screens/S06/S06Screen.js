@@ -5,6 +5,7 @@ import {
   Pressable,
   StyleSheet,
   ActivityIndicator,
+  AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { useIsFocused } from '@react-navigation/native';
@@ -17,7 +18,13 @@ import { iGa } from '../../utils/josa';
 import FarmScene3D from '../../components/farm/FarmScene3D';
 
 export default function S06Screen({ route, navigation }) {
-  const { plotIndex: routePlotIndex = 0, cropId, cropName, targetSeconds: routeTargetSeconds } = route.params || {};
+  const {
+    plotIndex: routePlotIndex = 0,
+    cropId,
+    cropName,
+    targetSeconds: routeTargetSeconds,
+    isNewPlanting = false,
+  } = route.params || {};
   const isFocused = useIsFocused();
 
   // 이어서 키우는 경우 서버 세션 기준으로 바뀔 수 있어서 state로 둠
@@ -28,25 +35,74 @@ export default function S06Screen({ route, navigation }) {
   const [session, setSession] = useState(null);
   const [targetSeconds, setTargetSeconds] = useState(routeTargetSeconds || 600);
   const [remainingSeconds, setRemainingSeconds] = useState(routeTargetSeconds || 600);
-  // 타이머가 최신 남은 시간을 읽기 위한 값 (setState 안에서 화면 이동을 하면 오류가 나서 따로 둠)
+
+  // 타이머·백그라운드 복귀 시 최신 값을 즉시 참조하기 위한 ref
   const remainingRef = useRef(remainingSeconds);
+  const targetSecondsRef = useRef(targetSeconds);
+  const sessionRef = useRef(session);
+  const lastSyncAnchorRef = useRef({
+    syncedAtMs: Date.now(),
+    remainingAtSync: routeTargetSeconds || 600,
+  });
+
   useEffect(() => {
     remainingRef.current = remainingSeconds;
   }, [remainingSeconds]);
+
+  useEffect(() => {
+    targetSecondsRef.current = targetSeconds;
+  }, [targetSeconds]);
+
+  useEffect(() => {
+    sessionRef.current = session;
+  }, [session]);
+
   const [plotsData, setPlotsData] = useState([]);
   const [currentCropName, setCurrentCropName] = useState(cropName || '작물');
 
   const timerRef = useRef(null);
+  const tickCountRef = useRef(0);
   const isMountedRef = useRef(true);
+  const isCompletingRef = useRef(false);
   const hasCheckedOverworkRef = useRef(false);
 
-  // 처음 들어올 때 + 다른 화면(S09 계속 키우기 등)에서 돌아올 때마다 서버 상태를 다시 맞춤
+  // 처음 들어올 때 + 다른 화면에서 돌아올 때마다 서버 상태를 다시 맞춤
   useEffect(() => {
     if (isFocused) initFocusSession();
   }, [isFocused]);
 
+  // 화면이 꺼지거나 백그라운드에 다녀온 뒤 active 복귀 시 경과 시간 반영 + 서버 동기화
+  useEffect(() => {
+    const subscription = AppState.addEventListener('change', (nextState) => {
+      if (nextState !== 'active' || !isMountedRef.current) return;
+
+      const currentSess = sessionRef.current;
+      if (!currentSess) return;
+
+      // 백그라운드에 있던 실제 시간만큼 먼저 즉시 차감
+      const elapsedSinceSync = Math.floor((Date.now() - lastSyncAnchorRef.current.syncedAtMs) / 1000);
+      const estimatedRemaining = Math.max(0, lastSyncAnchorRef.current.remainingAtSync - elapsedSinceSync);
+
+      remainingRef.current = estimatedRemaining;
+      setRemainingSeconds(estimatedRemaining);
+
+      if (estimatedRemaining <= 0) {
+        handleCompleteFocus();
+        return;
+      }
+
+      // 서버 세션과 재동기화
+      if (currentSess.session_id && !String(currentSess.session_id).startsWith('local_')) {
+        syncWithServer();
+      }
+    });
+
+    return () => subscription.remove();
+  }, [plotIndex]);
+
   useEffect(() => {
     isMountedRef.current = true;
+    isCompletingRef.current = false;
     hasCheckedOverworkRef.current = false;
 
     return () => {
@@ -58,6 +114,120 @@ export default function S06Screen({ route, navigation }) {
     };
   }, []);
 
+  const calculateStageFromProgress = (progressValue) => {
+    if (progressValue >= 80) return 5;
+    if (progressValue >= 60) return 4;
+    if (progressValue >= 40) return 3;
+    if (progressValue >= 20) return 2;
+    return 1;
+  };
+
+  // 서버 세션의 종료 시각(ends_at 등) · 시작 시각(started_at) · remaining_seconds를 모두 대응해 남은 초 계산
+  const computeServerRemainingSeconds = (currentSession, tSec) => {
+    if (!currentSession) return tSec;
+
+    const endField = currentSession.ends_at || currentSession.expires_at || currentSession.end_at;
+    if (endField) {
+      const endMs = new Date(endField).getTime();
+      if (!Number.isNaN(endMs)) {
+        return Math.max(0, Math.floor((endMs - Date.now()) / 1000));
+      }
+    }
+
+    if (currentSession.started_at && tSec) {
+      const startMs = new Date(currentSession.started_at).getTime();
+      if (!Number.isNaN(startMs)) {
+        const elapsedSec = Math.floor((Date.now() - startMs) / 1000);
+        return Math.max(0, tSec - elapsedSec);
+      }
+    }
+
+    if (currentSession.remaining_seconds !== undefined && currentSession.remaining_seconds !== null) {
+      return Math.max(0, Number(currentSession.remaining_seconds));
+    }
+
+    return tSec;
+  };
+
+  const applyServerSessionState = (currentSession, farmData, { allowFallbackCropName = true } = {}) => {
+    const sessionPlot = currentSession.plot_id
+      ? farmData.find(p => p.plot_id === currentSession.plot_id)
+      : null;
+    const activePlotIndex = sessionPlot ? sessionPlot.plot_index - 1 : routePlotIndex;
+    const activeCropName = allowFallbackCropName
+      ? (cropName || sessionPlot?.crop_name || currentCropName)
+      : (sessionPlot?.crop_name || cropName || currentCropName);
+
+    const tSec = Number(currentSession.target_seconds || routeTargetSeconds || 600);
+    const serverRemaining = computeServerRemainingSeconds(currentSession, tSec);
+
+    lastSyncAnchorRef.current = {
+      syncedAtMs: Date.now(),
+      remainingAtSync: serverRemaining,
+    };
+
+    sessionRef.current = currentSession;
+    targetSecondsRef.current = tSec;
+    remainingRef.current = serverRemaining;
+
+    setSession(currentSession);
+    setPlotIndex(activePlotIndex);
+    setCurrentCropName(activeCropName);
+    setTargetSeconds(tSec);
+    setRemainingSeconds(serverRemaining);
+
+    const currentProgress = calculateProgressForData(serverRemaining, tSec);
+    const calculatedStage = calculateStageFromProgress(currentProgress);
+
+    const formattedPlots = Array.from({ length: 12 }, (_, index) => {
+      const isCurrentFocusPlot = index === activePlotIndex;
+      const serverPlot = farmData.find(item => item.plot_index === index + 1);
+
+      return {
+        id: index,
+        plotIndex: index,
+        plotId: serverPlot?.plot_id || null,
+        farmStatus: isCurrentFocusPlot ? 'growing' : (serverPlot?.farm_status || 'empty'),
+        sessionStatus: isCurrentFocusPlot ? 'focusing' : (serverPlot?.session_status || null),
+        cropId: isCurrentFocusPlot ? (currentSession.crop_id || cropId) : (serverPlot?.crop_id || null),
+        cropName: isCurrentFocusPlot ? activeCropName : (serverPlot?.crop_name || null),
+        stage: isCurrentFocusPlot ? calculatedStage : (serverPlot?.farm_status === 'ripe' ? 5 : 1),
+      };
+    });
+    setPlotsData(formattedPlots);
+
+    return serverRemaining;
+  };
+
+  const syncWithServer = async () => {
+    try {
+      const [farmRes, activeRes] = await Promise.all([
+        supabase.rpc('get_my_farm'),
+        supabase.rpc('get_active_focus'),
+      ]);
+      if (farmRes.error) console.log('농장 조회 실패:', farmRes.error.message);
+      if (activeRes.error) {
+        console.log('활성 세션 조회 실패:', activeRes.error.message);
+        return;
+      }
+
+      const farmData = farmRes.data || [];
+      const activeSession = activeRes.data?.session ?? activeRes.data ?? null;
+
+      if (!activeSession || !isMountedRef.current) return;
+
+      const serverRemaining = applyServerSessionState(activeSession, farmData, {
+        allowFallbackCropName: false,
+      });
+
+      if (serverRemaining <= 0) {
+        handleCompleteFocus();
+      }
+    } catch (error) {
+      console.log('서버 세션 동기화 실패:', error?.message);
+    }
+  };
+
   const initFocusSession = async () => {
     const isFirstLoad = firstLoadRef.current;
     try {
@@ -68,25 +238,39 @@ export default function S06Screen({ route, navigation }) {
       const farmData = farmRes.data || [];
 
       let currentSession = null;
-      const activeRes = await supabase.rpc('get_active_focus');
-      if (activeRes.error) console.log('활성 세션 조회 실패:', activeRes.error.message);
-      else currentSession = activeRes.data?.session ?? null;
+      const shouldStartNew = Boolean(isFirstLoad && (isNewPlanting || cropId));
 
-      if (!currentSession && isFirstLoad) {
+      if (shouldStartNew) {
         const targetPlot = farmData.find(p => p.plot_index === routePlotIndex + 1);
-
         if (targetPlot?.plot_id && cropId) {
           const { data: startData, error: startError } = await supabase.rpc('start_focus', {
             p_plot_id: targetPlot.plot_id,
             p_crop_id: cropId,
           });
           if (startError) console.log('start_focus 실패:', startError.message);
-          else currentSession = startData;
+          else currentSession = startData?.session ?? startData ?? null;
         }
       }
 
       if (!currentSession) {
-        // 다시 돌아왔는데 서버 세션이 없으면(10배속 테스트 등) 지금 화면 상태를 그대로 이어감
+        const activeRes = await supabase.rpc('get_active_focus');
+        if (activeRes.error) console.log('활성 세션 조회 실패:', activeRes.error.message);
+        else currentSession = activeRes.data?.session ?? activeRes.data ?? null;
+      }
+
+      if (!currentSession && isFirstLoad && !shouldStartNew) {
+        const targetPlot = farmData.find(p => p.plot_index === routePlotIndex + 1);
+        if (targetPlot?.plot_id && cropId) {
+          const { data: startData, error: startError } = await supabase.rpc('start_focus', {
+            p_plot_id: targetPlot.plot_id,
+            p_crop_id: cropId,
+          });
+          if (startError) console.log('start_focus 실패:', startError.message);
+          else currentSession = startData?.session ?? startData ?? null;
+        }
+      }
+
+      if (!currentSession) {
         if (!isFirstLoad) return;
 
         const defaultTarget = routeTargetSeconds || 600;
@@ -99,52 +283,13 @@ export default function S06Screen({ route, navigation }) {
 
       if (!isMountedRef.current) return;
 
-      // 서버 세션이 있는 밭·작물 기준으로 맞춤 (S03·S07에서 이어서 들어오면 작물 정보가 없을 수 있음)
-      const sessionPlot = currentSession.plot_id
-        ? farmData.find(p => p.plot_id === currentSession.plot_id)
-        : null;
-      const activePlotIndex = sessionPlot ? sessionPlot.plot_index - 1 : routePlotIndex;
-      const activeCropName = sessionPlot?.crop_name || cropName || currentCropName;
-
-      const tSec = currentSession.target_seconds || routeTargetSeconds || 600;
-      const serverRemaining =
-        currentSession.remaining_seconds !== undefined && currentSession.remaining_seconds !== null
-          ? currentSession.remaining_seconds
-          : tSec;
-      // 10배속 테스트에서는 앱 시간이 서버보다 빨라서, 돌아왔을 때 시간이 뒤로 가지 않게 작은 쪽을 씀
-      const rSec = isFirstLoad ? serverRemaining : Math.min(serverRemaining, remainingRef.current);
-
-      setSession(currentSession);
-      setPlotIndex(activePlotIndex);
-      setCurrentCropName(activeCropName);
-      setTargetSeconds(tSec);
-      remainingRef.current = rSec;
-      setRemainingSeconds(rSec);
-
-      const currentProgress = calculateProgressForData(rSec, tSec);
-
-      let calculatedStage = 1;
-      if (currentProgress >= 80) calculatedStage = 5;
-      else if (currentProgress >= 60) calculatedStage = 4;
-      else if (currentProgress >= 40) calculatedStage = 3;
-      else if (currentProgress >= 20) calculatedStage = 2;
-
-      const formattedPlots = Array.from({ length: 12 }, (_, index) => {
-        const isCurrentFocusPlot = index === activePlotIndex;
-        const serverPlot = farmData.find(item => item.plot_index === index + 1);
-
-        return {
-          id: index,
-          plotIndex: index,
-          plotId: serverPlot?.plot_id || null,
-          farmStatus: isCurrentFocusPlot ? 'growing' : (serverPlot?.farm_status || 'empty'),
-          sessionStatus: isCurrentFocusPlot ? 'focusing' : (serverPlot?.session_status || null),
-          cropId: isCurrentFocusPlot ? (currentSession.crop_id || cropId) : (serverPlot?.crop_id || null),
-          cropName: isCurrentFocusPlot ? activeCropName : (serverPlot?.crop_name || null),
-          stage: isCurrentFocusPlot ? calculatedStage : (serverPlot?.farm_status === 'ripe' ? 5 : 1),
-        };
+      const serverRemaining = applyServerSessionState(currentSession, farmData, {
+        allowFallbackCropName: shouldStartNew,
       });
-      setPlotsData(formattedPlots);
+
+      if (serverRemaining <= 0 && !shouldStartNew) {
+        handleCompleteFocus();
+      }
     } catch (error) {
       console.error('집중 세션 초기화 실패:', error.message);
     } finally {
@@ -154,7 +299,7 @@ export default function S06Screen({ route, navigation }) {
   };
 
   const checkOverworkNotice = async (targetSessionId) => {
-    if (!targetSessionId || hasCheckedOverworkRef.current || targetSessionId.startsWith('local_')) return;
+    if (!targetSessionId || hasCheckedOverworkRef.current || String(targetSessionId).startsWith('local_')) return;
     hasCheckedOverworkRef.current = true;
 
     try {
@@ -177,24 +322,29 @@ export default function S06Screen({ route, navigation }) {
   };
 
   const handleCompleteFocus = async () => {
+    if (isCompletingRef.current) return;
+    isCompletingRef.current = true;
+
     if (timerRef.current) {
       clearInterval(timerRef.current);
       timerRef.current = null;
     }
-    const serverSessionId =
-      session?.session_id && !session.session_id.startsWith('local_') ? session.session_id : undefined;
 
-    // 목표 시간이 실제로 지났으면 서버가 ripe로 확정함 (10배속 테스트는 서버에선 아직 키우는 중)
+    const currentSess = sessionRef.current;
+    const serverSessionId =
+      currentSess?.session_id && !String(currentSess.session_id).startsWith('local_')
+        ? currentSess.session_id
+        : undefined;
+
     if (serverSessionId) {
       const { error } = await supabase.rpc('finalize_my_focus');
       if (error) console.log('finalize_my_focus 실패:', error.message);
     }
 
     if (isMountedRef.current) {
-      // S10에서 sessionId로 수확(harvest_crop)함
       navigation.replace('S10', {
         cropName: currentCropName,
-        minutes: Math.round(targetSeconds / 60) || 10,
+        minutes: Math.round(targetSecondsRef.current / 60) || 10,
         plotIndex,
         sessionId: serverSessionId,
       });
@@ -215,50 +365,49 @@ export default function S06Screen({ route, navigation }) {
     return Math.min(Math.max(progress, 0), 100);
   };
 
-  // ⚡ 10배속 타이머 루프 (1초마다 10초씩 남은 시간을 줄여줌)
+  // 기준 시각(lastSyncAnchorRef) 대비 실제 경과 초를 계산해 화면 잠금/백그라운드 지연에도 정확히 흐르게 함
   useEffect(() => {
     if (!session || !isFocused) return;
+    tickCountRef.current = 0;
 
     timerRef.current = setInterval(() => {
       if (!isMountedRef.current) return;
 
-      const prev = remainingRef.current;
+      const elapsedSinceSync = Math.floor((Date.now() - lastSyncAnchorRef.current.syncedAtMs) / 1000);
+      const nextSec = Math.max(0, lastSyncAnchorRef.current.remainingAtSync - elapsedSinceSync);
 
-      if (prev <= 10) {
-        if (timerRef.current) {
-          clearInterval(timerRef.current);
-          timerRef.current = null;
-        }
+      if (nextSec <= 0) {
         remainingRef.current = 0;
         setRemainingSeconds(0);
         handleCompleteFocus();
         return;
       }
 
-      const nextSec = prev - 10; // ⚡ 10배속 적용
-      remainingRef.current = nextSec;
-      setRemainingSeconds(nextSec);
+      if (nextSec !== remainingRef.current) {
+        remainingRef.current = nextSec;
+        setRemainingSeconds(nextSec);
+      }
 
-      const elapsedSec = targetSeconds - nextSec;
+      const tSec = targetSecondsRef.current;
+      const elapsedSec = tSec - nextSec;
 
       if (elapsedSec > 5400 && session?.session_id && !hasCheckedOverworkRef.current) {
         checkOverworkNotice(session.session_id);
       }
 
-      const updatedProgress = Math.min(Math.max(Math.floor((elapsedSec / targetSeconds) * 100), 0), 100);
+      const updatedProgress = Math.min(Math.max(Math.floor((elapsedSec / tSec) * 100), 0), 100);
+      const newStage = calculateStageFromProgress(updatedProgress);
 
-      let newStage = 1;
-      if (updatedProgress >= 80) newStage = 5;
-      else if (updatedProgress >= 60) newStage = 4;
-      else if (updatedProgress >= 40) newStage = 3;
-      else if (updatedProgress >= 20) newStage = 2;
-
-      // 단계가 바뀔 때만 밭 정보를 새로 만듦
       setPlotsData(prevPlots =>
         prevPlots.some(p => p.id === plotIndex && p.stage !== newStage)
           ? prevPlots.map(p => (p.id === plotIndex ? { ...p, stage: newStage } : p))
           : prevPlots
       );
+
+      tickCountRef.current += 1;
+      if (tickCountRef.current % 10 === 0 && session?.session_id && !String(session.session_id).startsWith('local_')) {
+        syncWithServer();
+      }
     }, 1000);
 
     return () => {
@@ -267,7 +416,7 @@ export default function S06Screen({ route, navigation }) {
         timerRef.current = null;
       }
     };
-  }, [session, targetSeconds, plotIndex, isFocused]);
+  }, [session, plotIndex, isFocused]);
 
   const formatTime = (secs) => {
     const minutes = Math.floor(secs / 60);
@@ -283,7 +432,7 @@ export default function S06Screen({ route, navigation }) {
 
     let pausedRemaining = remainingSeconds;
     try {
-      if (session?.session_id && !session.session_id.startsWith('local_')) {
+      if (session?.session_id && !String(session.session_id).startsWith('local_')) {
         const { data } = await supabase.rpc('pause_focus', {
           p_session_id: session.session_id,
         });
@@ -312,15 +461,15 @@ export default function S06Screen({ route, navigation }) {
       timerRef.current = null;
     }
 
-    let previewData = { 
-      focusSeconds: targetSeconds - remainingSeconds, 
-      focusMinutes: Math.floor((targetSeconds - remainingSeconds) / 60), 
-      progress: calculateProgress(), 
-      result: 'SEED' 
+    let previewData = {
+      focusSeconds: targetSeconds - remainingSeconds,
+      focusMinutes: Math.floor((targetSeconds - remainingSeconds) / 60),
+      progress: calculateProgress(),
+      result: 'SEED',
     };
 
     try {
-      if (session?.session_id && !session.session_id.startsWith('local_')) {
+      if (session?.session_id && !String(session.session_id).startsWith('local_')) {
         const { data } = await supabase.rpc('preview_stop_focus', {
           p_session_id: session.session_id,
         });
@@ -344,13 +493,7 @@ export default function S06Screen({ route, navigation }) {
   }
 
   const progress = calculateProgress();
-
-  let currentStageIndex = 0;
-  if (progress >= 80) currentStageIndex = 4;
-  else if (progress >= 60) currentStageIndex = 3;
-  else if (progress >= 40) currentStageIndex = 2;
-  else if (progress >= 20) currentStageIndex = 1;
-  else currentStageIndex = 0;
+  const currentStageIndex = calculateStageFromProgress(progress) - 1;
 
   const stages = [
     { key: 'seed', label: '씨앗' },
@@ -363,9 +506,9 @@ export default function S06Screen({ route, navigation }) {
   return (
     <View style={commonStyles.screen}>
       <View style={styles.farmBackground}>
-        <FarmScene3D 
-          cameraPos={[0, 10, 10]} 
-          modelOffsetY={1.8} 
+        <FarmScene3D
+          cameraPos={[0, 7, 7.8]}
+          modelOffsetY={1.7}
           plotsData={plotsData}
           selectedPlotIndex={plotIndex !== undefined ? plotIndex : null}
         />
@@ -375,7 +518,7 @@ export default function S06Screen({ route, navigation }) {
         <View style={styles.topSpacer} />
 
         <View style={styles.bottomSheet}>
-          <Text style={styles.title}>{currentCropName} 키우는 중 (10배속 테스트)</Text>
+          <Text style={styles.title}>{currentCropName} 키우는 중</Text>
           <Text style={styles.subtitle}>휴대폰을 세워두고 작물이 자라는 걸 지켜봐 주세요</Text>
 
           <View style={styles.stageContainer}>
