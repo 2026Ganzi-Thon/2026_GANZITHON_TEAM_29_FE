@@ -22,6 +22,11 @@ export default function S06Screen({ route, navigation }) {
   const [session, setSession] = useState(null);
   const [targetSeconds, setTargetSeconds] = useState(routeTargetSeconds || 600);
   const [remainingSeconds, setRemainingSeconds] = useState(routeTargetSeconds || 600);
+  // 타이머가 최신 남은 시간을 읽기 위한 값 (setState 안에서 화면 이동을 하면 오류가 나서 따로 둠)
+  const remainingRef = useRef(remainingSeconds);
+  useEffect(() => {
+    remainingRef.current = remainingSeconds;
+  }, [remainingSeconds]);
   const [plotsData, setPlotsData] = useState([]);
   const [currentCropName, setCurrentCropName] = useState(cropName);
 
@@ -219,37 +224,43 @@ export default function S06Screen({ route, navigation }) {
     timerRef.current = setInterval(() => {
       if (!isMountedRef.current) return;
 
-      setRemainingSeconds(prev => {
-        if (prev <= 10) {
-          if (timerRef.current) {
-            clearInterval(timerRef.current);
-            timerRef.current = null;
-          }
-          handleCompleteFocus();
-          return 0;
+      const prev = remainingRef.current;
+
+      if (prev <= 10) {
+        if (timerRef.current) {
+          clearInterval(timerRef.current);
+          timerRef.current = null;
         }
-        const nextSec = prev - 10; // ⚡ 10배속 적용
-        const elapsedSec = targetSeconds - nextSec;
+        remainingRef.current = 0;
+        setRemainingSeconds(0);
+        handleCompleteFocus();
+        return;
+      }
 
-        if (elapsedSec > 5400 && session?.session_id && !hasCheckedOverworkRef.current) {
-          checkOverworkNotice(session.session_id);
-        }
-        
-        const updatedProgress = Math.min(Math.max(Math.floor((elapsedSec / targetSeconds) * 100), 0), 100);
-        
-        let newStage = 1;
-        if (updatedProgress >= 80) newStage = 5;
-        else if (updatedProgress >= 60) newStage = 4;
-        else if (updatedProgress >= 40) newStage = 3;
-        else if (updatedProgress >= 20) newStage = 2;
-        else newStage = 1;
+      const nextSec = prev - 10; // ⚡ 10배속 적용
+      remainingRef.current = nextSec;
+      setRemainingSeconds(nextSec);
 
-        setPlotsData(prevPlots =>
-          prevPlots.map(p => p.id === plotIndex ? { ...p, stage: newStage } : p)
-        );
+      const elapsedSec = targetSeconds - nextSec;
 
-        return nextSec;
-      });
+      if (elapsedSec > 5400 && session?.session_id && !hasCheckedOverworkRef.current) {
+        checkOverworkNotice(session.session_id);
+      }
+
+      const updatedProgress = Math.min(Math.max(Math.floor((elapsedSec / targetSeconds) * 100), 0), 100);
+
+      let newStage = 1;
+      if (updatedProgress >= 80) newStage = 5;
+      else if (updatedProgress >= 60) newStage = 4;
+      else if (updatedProgress >= 40) newStage = 3;
+      else if (updatedProgress >= 20) newStage = 2;
+
+      // 단계가 바뀔 때만 밭 정보를 새로 만듦
+      setPlotsData(prevPlots =>
+        prevPlots.some(p => p.id === plotIndex && p.stage !== newStage)
+          ? prevPlots.map(p => (p.id === plotIndex ? { ...p, stage: newStage } : p))
+          : prevPlots
+      );
     }, 1000);
 
     return () => {
