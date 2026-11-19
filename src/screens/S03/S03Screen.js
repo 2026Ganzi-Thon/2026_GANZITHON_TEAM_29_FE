@@ -5,7 +5,6 @@ import {
   Text,
   Pressable,
   StyleSheet,
-  ActivityIndicator,
 } from 'react-native';
 
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -47,7 +46,6 @@ export default function S03Screen({ navigation }) {
   const DEFAULT_NOTICE = '빈 밭을 눌러 씨앗을 심어요';
   const [notice, setNotice] = useState(DEFAULT_NOTICE);
 
-  // 다른 화면에서 돌아올 때마다 농장 상태를 다시 불러옴
   useFocusEffect(
     useCallback(() => {
       setSelectedPlot(null);
@@ -67,34 +65,48 @@ export default function S03Screen({ navigation }) {
       setLoading(true);
 
       const { data, error } = await supabase.rpc('get_my_farm');
-      
       const farmList = error ? [] : (data || []);
 
       const formattedPlots = Array.from({ length: 12 }, (_, index) => {
-        // 앱은 0 ~ 11, 서버 plot_index는 1 ~ 12
         const plotIndex = index;
         const serverPlot = farmList.find(item => item.plot_index === plotIndex + 1);
 
+        const rawFarmStatus = serverPlot?.farm_status || 'empty';
+        const rawSessionStatus = serverPlot?.session_status || null;
+        const remSec =
+          serverPlot?.remaining_seconds !== undefined && serverPlot?.remaining_seconds !== null
+            ? Number(serverPlot.remaining_seconds)
+            : null;
+
+        // 시간이 이미 0 이하인데 growing/active로 남아 있는 유령 세션 방어
+        const isExpiredActiveSession =
+          rawFarmStatus === 'growing' &&
+          (rawSessionStatus === 'active' || rawSessionStatus === 'focusing') &&
+          remSec !== null &&
+          remSec <= 0;
+
+        const normalizedFarmStatus = isExpiredActiveSession ? 'ripe' : rawFarmStatus;
+        const normalizedSessionStatus = isExpiredActiveSession ? null : rawSessionStatus;
+
         return {
           id: plotIndex,
-          plotIndex: plotIndex, // 0 ~ 11 통일
+          plotIndex: plotIndex,
           plotId: serverPlot?.plot_id || `mock_plot_id_${plotIndex}`,
-          farmStatus: serverPlot?.farm_status || 'empty',
-          sessionId: serverPlot?.session_id || null,
-          sessionStatus: serverPlot?.session_status || null,
+          farmStatus: normalizedFarmStatus,
+          sessionId: isExpiredActiveSession ? null : (serverPlot?.session_id || null),
+          sessionStatus: normalizedSessionStatus,
           cropId: serverPlot?.crop_id || null,
           cropName: serverPlot?.crop_name || null,
           targetSeconds: serverPlot?.target_seconds || null,
           harvestId: serverPlot?.harvest_id || null,
           isAutoHarvest: serverPlot?.is_auto_harvest || false,
           focusedSeconds: serverPlot?.focused_seconds || 0,
-          stage: serverPlot?.farm_status === 'ripe' ? 5 : 1,
+          stage: normalizedFarmStatus === 'ripe' ? 5 : 1,
         };
       });
 
       setPlotsData(formattedPlots);
 
-      // 오늘 키운 시간·수확 수는 기록 API에서 가져옴 (get_my_farm에는 없음)
       try {
         const today = await fetchHistory('today');
         setTodayStats({
@@ -112,10 +124,9 @@ export default function S03Screen({ navigation }) {
       if (unacknowledgedHarvestIds && unacknowledgedHarvestIds.length > 0) {
         await supabase.rpc('ack_auto_harvest_notice', { p_harvest_ids: unacknowledgedHarvestIds }).catch(() => {});
       }
-
     } catch (error) {
       console.error('S03 데이터 초기화 실패:', error.message);
-      
+
       const fallbackPlots = Array.from({ length: 12 }, (_, index) => ({
         id: index,
         plotIndex: index,
@@ -130,14 +141,18 @@ export default function S03Screen({ navigation }) {
   };
 
   const handleSelectPlot = (plotIndex) => {
-    // 💡 [핵심] 누른 밭 인덱스(0~11)를 하이라이트와 네비게이션 전달값으로 100% 동일하게 사용
     setSelectedPlot(plotIndex);
 
     const targetPlot = plotsData.find(p => p.plotIndex === plotIndex);
-    const growingPlot = plotsData.find(p => p.farmStatus === 'growing');
 
-    // 서버는 한 번에 한 작물만 키울 수 있음
-    if ((!targetPlot || targetPlot.farmStatus === 'empty') && growingPlot) {
+    // 실제로 진행 중인 세션이 있을 때만 빈 밭 새 파종 차단 ('ripe' 밭은 허용)
+    const hasActiveSession = plotsData.some(
+      p =>
+        p.farmStatus === 'growing' &&
+        (p.sessionStatus === 'active' || p.sessionStatus === 'focusing' || p.sessionStatus === 'paused')
+    );
+
+    if ((!targetPlot || targetPlot.farmStatus === 'empty') && hasActiveSession) {
       setSelectedPlot(null);
       setNotice('한 번에 하나만 키울 수 있어요');
       return;
@@ -146,7 +161,7 @@ export default function S03Screen({ navigation }) {
     if (!targetPlot || targetPlot.farmStatus === 'empty') {
       setTimeout(() => {
         navigation.navigate('S04', { plotIndex: plotIndex });
-      }, 150); 
+      }, 150);
     } else if (targetPlot.farmStatus === 'ripe') {
       setTimeout(() => {
         navigation.navigate('S17', {
@@ -156,16 +171,7 @@ export default function S03Screen({ navigation }) {
           sessionId: targetPlot.sessionId,
         });
       }, 150);
-    } else if (targetPlot.sessionStatus === 'paused') {
-      setTimeout(() => {
-        navigation.navigate('S07', {
-          plotIndex: plotIndex,
-          sessionId: targetPlot.sessionId,
-          cropId: targetPlot.cropId,
-          cropName: targetPlot.cropName,
-        });
-      }, 150);
-    } else if (targetPlot.farmStatus === 'growing') {
+    } else if (targetPlot.farmStatus === 'growing' || targetPlot.sessionStatus === 'paused') {
       setTimeout(() => {
         navigation.navigate('S06', {
           plotIndex: plotIndex,
@@ -185,9 +191,9 @@ export default function S03Screen({ navigation }) {
   return (
     <View style={commonStyles.screen}>
       <View style={styles.farmBackground}>
-        <FarmScene3D 
-          cameraPos={[0, 6.0, 7.0]} 
-          modelOffsetY={-0.5} 
+        <FarmScene3D
+          cameraPos={[0, 6.0, 7.0]}
+          modelOffsetY={-0.7}
           plotsData={plotsData}
           selectedPlotIndex={selectedPlot}
           onSelectPlot={handleSelectPlot}
@@ -221,9 +227,9 @@ export default function S03Screen({ navigation }) {
 
         <View style={styles.middleSpacer} pointerEvents="none" />
 
-        <BottomNoticeToast 
-          message={notice} 
-          style={styles.toastStyle} 
+        <BottomNoticeToast
+          message={notice}
+          style={styles.toastStyle}
           onPress={() => {
             const firstEmpty = plotsData.find(p => p.farmStatus === 'empty');
             const targetPlotIndex = firstEmpty ? firstEmpty.plotIndex : 0;
@@ -260,13 +266,13 @@ const styles = StyleSheet.create({
     fontSize: FONTS.size.body - 1,
     color: COLORS.black,
     fontWeight: FONTS.weight.medium,
-    marginBottom: 20, 
+    marginBottom: 20,
   },
   headerTopRow: {
     flexDirection: 'row',
     justifyContent: 'space-between',
     alignItems: 'center',
-    marginBottom: 20, 
+    marginBottom: 20,
   },
   brandTitle: {
     fontSize: FONTS.size.title - 2,

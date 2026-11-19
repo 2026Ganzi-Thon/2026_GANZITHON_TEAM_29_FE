@@ -41,7 +41,6 @@ export default function S01Screen({ navigation }) {
       {/* 3D 배경에 cameraPos와 modelOffsetY 전달 */}
       <View style={styles.farmBackground}>
         <FarmScene3D 
-
           modelOffsetY={1.3} 
         />
       </View>

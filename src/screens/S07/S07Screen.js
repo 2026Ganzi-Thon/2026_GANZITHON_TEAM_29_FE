@@ -14,12 +14,68 @@ import { supabase } from '../../utils/supabase';
 
 import FarmScene3D from '../../components/farm/FarmScene3D';
 
+function calculateStageFromProgress(progressValue) {
+  if (progressValue >= 100) return 5;
+  if (progressValue >= 80) return 4;
+  if (progressValue >= 50) return 3;
+  if (progressValue >= 20) return 2;
+  return 1;
+}
+
+function calculateProgressFromTimes(remSec, targetSec) {
+  const validTarget = Number(targetSec) || 0;
+  if (validTarget <= 0) return 0;
+  const safeRem = Math.max(0, Math.min(validTarget, Number(remSec) || 0));
+  const elapsed = validTarget - safeRem;
+  return Math.min(Math.max(Math.floor((elapsed / validTarget) * 100), 0), 100);
+}
+
+function resolveRemainingSeconds(sessionObj, fallbackSeconds = 0) {
+  if (!sessionObj) return Math.max(0, Math.round(Number(fallbackSeconds) || 0));
+
+  const endField = sessionObj.ends_at || sessionObj.expires_at || sessionObj.end_at;
+  if (endField) {
+    const endMs = new Date(endField).getTime();
+    if (!Number.isNaN(endMs)) {
+      return Math.max(0, Math.round((endMs - Date.now()) / 1000));
+    }
+  }
+
+  const targetSec = Number(sessionObj.target_seconds || fallbackSeconds || 0);
+  if (sessionObj.started_at && targetSec > 0) {
+    const startMs = new Date(sessionObj.started_at).getTime();
+    if (!Number.isNaN(startMs)) {
+      const elapsedSec = Math.round((Date.now() - startMs) / 1000);
+      return Math.max(0, targetSec - elapsedSec);
+    }
+  }
+
+  if (sessionObj.remaining_seconds !== undefined && sessionObj.remaining_seconds !== null) {
+    return Math.max(0, Math.round(Number(sessionObj.remaining_seconds)));
+  }
+
+  return Math.max(0, Math.round(Number(fallbackSeconds) || 0));
+}
+
 export default function S07Screen({ route, navigation }) {
-  const { sessionId, plotIndex = 0, cropId, cropName } = route.params || {};
+  const {
+    sessionId,
+    plotIndex = 0,
+    cropId,
+    cropName,
+    targetSeconds: routeTargetSeconds,
+  } = route.params || {};
   const isServerSession = !!sessionId && !String(sessionId).startsWith('local_');
 
   const [loading, setLoading] = useState(false);
-  const [remainingSeconds, setRemainingSeconds] = useState(route.params?.remainingSeconds || 0);
+  const [remainingSeconds, setRemainingSeconds] = useState(
+    route.params?.remainingSeconds !== undefined
+      ? Math.max(0, Math.round(Number(route.params.remainingSeconds)))
+      : 0
+  );
+  const [targetSeconds, setTargetSeconds] = useState(
+    routeTargetSeconds ? Math.max(1, Number(routeTargetSeconds)) : 0
+  );
   const [plotsData, setPlotsData] = useState([]);
   const [currentCropName, setCurrentCropName] = useState(cropName || '작물');
 
@@ -27,52 +83,105 @@ export default function S07Screen({ route, navigation }) {
     fetchFarmState();
   }, []);
 
+  const buildPlots = (farmData, remSec, tSec, activeCrop) => {
+    const progress = calculateProgressFromTimes(remSec, tSec);
+    const activeStage = calculateStageFromProgress(progress);
+
+    return Array.from({ length: 12 }, (_, index) => {
+      const serverPlot = farmData?.find(item => item.plot_index === index + 1);
+      const isCurrentPausedPlot = index === plotIndex;
+
+      return {
+        id: index,
+        plotIndex: index,
+        plotId: serverPlot?.plot_id || null,
+        farmStatus: isCurrentPausedPlot ? 'paused' : (serverPlot?.farm_status || 'empty'),
+        cropName: isCurrentPausedPlot
+          ? (serverPlot?.crop_name || activeCrop || cropName || null)
+          : (serverPlot?.crop_name || null),
+        stage: isCurrentPausedPlot
+          ? activeStage
+          : (serverPlot?.farm_status === 'ripe' ? 5 : 1),
+      };
+    });
+  };
+
   const fetchFarmState = async () => {
     try {
       const { data: farmData } = await supabase.rpc('get_my_farm');
-      
-      // 💡 0 ~ 11 인덱스로 일치시켜 튕김 현상 방지
-      const formattedPlots = Array.from({ length: 12 }, (_, index) => {
-        const serverPlot = farmData?.find(item => item.plot_index === index + 1);
-        return {
-          id: index,
-          plotIndex: index,
-          plotId: serverPlot?.plot_id || null,
-          farmStatus: index === plotIndex ? 'paused' : (serverPlot?.farm_status || 'empty'),
-          cropName: index === plotIndex ? (serverPlot?.crop_name || cropName || null) : (serverPlot?.crop_name || null),
-          stage: serverPlot?.farm_status === 'ripe' ? 5 : 1,
-        };
-      });
 
-      setPlotsData(formattedPlots);
-
+      let resolvedCropName = cropName || '작물';
       if (plotIndex !== undefined) {
         const targetPlot = farmData?.find(item => item.plot_index === plotIndex + 1);
         if (targetPlot && targetPlot.crop_name) {
+          resolvedCropName = targetPlot.crop_name;
           setCurrentCropName(targetPlot.crop_name);
         }
       }
 
-      // S03에서 바로 들어오면 남은 시간을 모르니 서버에서 가져옴
-      if (route.params?.remainingSeconds === undefined && isServerSession) {
+      let syncedSeconds =
+        route.params?.remainingSeconds !== undefined
+          ? Math.max(0, Math.round(Number(route.params.remainingSeconds)))
+          : remainingSeconds;
+      let syncedTarget = routeTargetSeconds
+        ? Math.max(1, Number(routeTargetSeconds))
+        : targetSeconds;
+
+      if (isServerSession) {
         const { data } = await supabase.rpc('get_active_focus');
-        if (data?.session?.remaining_seconds !== undefined) {
-          setRemainingSeconds(data.session.remaining_seconds);
+        const activeSession = data?.session ?? data ?? null;
+        if (activeSession) {
+          if (activeSession.target_seconds) {
+            syncedTarget = Math.max(1, Number(activeSession.target_seconds));
+            setTargetSeconds(syncedTarget);
+          }
+          syncedSeconds = resolveRemainingSeconds(activeSession, syncedSeconds);
+          setRemainingSeconds(syncedSeconds);
         }
       }
+
+      if (!syncedTarget && routeTargetSeconds) {
+        syncedTarget = Math.max(1, Number(routeTargetSeconds));
+        setTargetSeconds(syncedTarget);
+      }
+
+      setPlotsData(buildPlots(farmData, syncedSeconds, syncedTarget, resolvedCropName));
     } catch (error) {
       console.error('농장 상태 조회 실패:', error.message);
     }
   };
 
+  useEffect(() => {
+    if (plotsData.length === 0) return;
+    const progress = calculateProgressFromTimes(remainingSeconds, targetSeconds);
+    const activeStage = calculateStageFromProgress(progress);
+
+    setPlotsData(prev =>
+      prev.map(p =>
+        p.plotIndex === plotIndex && p.stage !== activeStage
+          ? { ...p, stage: activeStage }
+          : p
+      )
+    );
+  }, [remainingSeconds, targetSeconds, plotIndex]);
+
   const formatTime = (secs) => {
-    const minutes = Math.floor(secs / 60);
-    const seconds = secs % 60;
+    const safeSecs = Math.max(0, Math.round(Number(secs) || 0));
+    const minutes = Math.floor(safeSecs / 60);
+    const seconds = safeSecs % 60;
     return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   };
 
   const handleResumeFocus = async () => {
-    const resumeParams = { plotIndex, sessionId, cropId, cropName: currentCropName };
+    const resumeParams = {
+      plotIndex,
+      sessionId,
+      cropId,
+      cropName: currentCropName,
+      targetSeconds: targetSeconds || routeTargetSeconds,
+      remainingSeconds,
+      fromPause: true,
+    };
 
     if (!isServerSession) {
       navigation.replace('S06', resumeParams);
@@ -90,6 +199,7 @@ export default function S07Screen({ route, navigation }) {
       navigation.replace('S06', resumeParams);
     } catch (error) {
       console.error('집중 재개 실패:', error.message);
+      navigation.replace('S06', resumeParams);
     } finally {
       setLoading(false);
     }
@@ -120,11 +230,12 @@ export default function S07Screen({ route, navigation }) {
   return (
     <View style={commonStyles.screen}>
       <View style={styles.farmBackground}>
-        <FarmScene3D 
-          cameraPos={[0, 5.0, 5.8]} 
-          modelOffsetY={0.4} 
+        <FarmScene3D
+          cameraPos={[0, 6, 7]}
+          modelOffsetY={0.5}
           plotsData={plotsData}
           selectedPlotIndex={plotIndex}
+          opacity={0.7}
         />
         <View style={styles.pausedOverlay} />
       </View>
@@ -171,7 +282,7 @@ const styles = StyleSheet.create({
   },
   pausedOverlay: {
     ...StyleSheet.absoluteFillObject,
-    backgroundColor: 'rgba(255, 255, 255, 0.3)',
+    backgroundColor: 'rgba(245, 241, 232, 0.55)',
     zIndex: 1,
   },
   container: {
@@ -198,9 +309,11 @@ const styles = StyleSheet.create({
     shadowRadius: 10,
   },
   title: {
+    alignSelf: 'flex-start',
     fontSize: FONTS.size.body,
-    color: COLORS.graytext,
-    marginBottom: 4,
+    fontWeight: FONTS.weight.medium,
+    color: COLORS.black,
+    marginBottom: 14,
   },
   subMainTitle: {
     fontSize: FONTS.size.title || 20,
