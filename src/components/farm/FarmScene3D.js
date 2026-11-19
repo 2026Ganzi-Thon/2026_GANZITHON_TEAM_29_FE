@@ -97,7 +97,6 @@ function safeConfigureMaterial(mat) {
     mat.map.encoding = THREE.sRGBEncoding;
     mat.map.flipY = false;
   }
-  mat.needsUpdate = true;
   return mat;
 }
 
@@ -158,6 +157,9 @@ async function loadCropsModel() {
           } else if (child.material) {
             safeConfigureMaterial(child.material);
           }
+          if (child.geometry && !child.geometry.boundingBox) {
+            child.geometry.computeBoundingBox();
+          }
         }
       });
       return cropGltf.scene;
@@ -216,7 +218,7 @@ function FarmCanvas({
   const sceneRef = useRef(null);
   const farmModelRef = useRef(null);
   const cropsGroupRef = useRef(null);
-  const needsRenderLogRef = useRef(false);
+  const pendingGroupRef = useRef(null);
   const plotMeshesRef = useRef([]);
   const plotCentersRef = useRef([]);
   const layoutRef = useRef({ width: 0, height: 0 });
@@ -224,6 +226,7 @@ function FarmCanvas({
   const isSceneReadyRef = useRef(false);
   const isUpdatingRef = useRef(false);
   const pendingUpdateRef = useRef(false);
+  const lastPlotsSignatureRef = useRef('');
 
   const selectedPlotIndexRef = useRef(selectedPlotIndex);
   const onSelectPlotRef = useRef(onSelectPlot);
@@ -234,6 +237,17 @@ function FarmCanvas({
 
   useEffect(() => {
     plotsDataRef.current = plotsData;
+    const sig = JSON.stringify(
+      (plotsData || []).map((p) => [
+        p.plotIndex ?? p.id,
+        p.cropName || '',
+        p.stage ?? 1,
+        p.farmStatus || '',
+      ])
+    );
+    if (sig === lastPlotsSignatureRef.current) return;
+    lastPlotsSignatureRef.current = sig;
+
     if (isSceneReadyRef.current && sceneRef.current && farmModelRef.current) {
       updateCrops();
     }
@@ -273,7 +287,6 @@ function FarmCanvas({
             mat.emissiveIntensity = 0;
           }
         }
-        mat.needsUpdate = true;
       };
 
       if (Array.isArray(mesh.material)) {
@@ -312,6 +325,7 @@ function FarmCanvas({
 
       const nextGroup = new THREE.Group();
       const currentPlots = plotsDataRef.current;
+      const farmScale = farmModelRef.current.scale.x;
 
       if (currentPlots && currentPlots.length > 0) {
         currentPlots.forEach((plot) => {
@@ -327,36 +341,29 @@ function FarmCanvas({
             else targetKey = `${cropName}_3`;
 
             const targetMeshName = CROP_MESH_MAP[targetKey];
+            const plotCenter = plotCentersRef.current[pIndex];
 
-            if (targetMeshName) {
+            if (targetMeshName && plotCenter) {
               cropsScene.traverse((child) => {
                 if (child.isMesh && child.name === targetMeshName && child.geometry) {
-                  const cropClone = child.clone(false);
-                  cropClone.position.set(0, 0, 0);
-                  cropClone.rotation.set(0, 0, 0);
-                  cropClone.scale.set(1, 1, 1);
+                  const pivot = new THREE.Group();
+                  pivot.position.set(
+                    plotCenter.x,
+                    plotCenter.y + (modelOffsetY || 0) - 2.1,
+                    plotCenter.z
+                  );
+                  pivot.scale.setScalar(farmScale * 0.85);
 
-                  const centeredGeo = child.geometry.clone();
-                  centeredGeo.computeBoundingBox();
-                  const box = centeredGeo.boundingBox;
+                  const meshNode = new THREE.Mesh(child.geometry, child.material);
+                  const box = child.geometry.boundingBox;
                   if (box) {
-                    const meshCenter = new THREE.Vector3();
-                    box.getCenter(meshCenter);
-                    centeredGeo.translate(-meshCenter.x, -box.min.y, -meshCenter.z);
+                    const center = new THREE.Vector3();
+                    box.getCenter(center);
+                    meshNode.position.set(-center.x, -box.min.y, -center.z);
                   }
-                  cropClone.geometry = centeredGeo;
 
-                  const plotCenter = plotCentersRef.current[pIndex];
-                  if (plotCenter && farmModelRef.current) {
-                    const farmScale = farmModelRef.current.scale.x;
-                    cropClone.position.set(
-                      plotCenter.x,
-                      plotCenter.y + (modelOffsetY || 0) - 2.1,
-                      plotCenter.z
-                    );
-                    cropClone.scale.multiplyScalar(farmScale * 0.85);
-                    nextGroup.add(cropClone);
-                  }
+                  pivot.add(meshNode);
+                  nextGroup.add(pivot);
                 }
               });
             }
@@ -365,15 +372,7 @@ function FarmCanvas({
       }
 
       if (!mountedRef.current || !sceneRef.current) return;
-
-      const prevGroup = cropsGroupRef.current;
-      cropsGroupRef.current = nextGroup;
-      sceneRef.current.add(nextGroup);
-      needsRenderLogRef.current = true;
-
-      if (prevGroup) {
-        sceneRef.current.remove(prevGroup);
-      }
+      pendingGroupRef.current = nextGroup;
     } catch (err) {
       console.log('❌ updateCrops 에러:', err?.message);
     } finally {
@@ -462,6 +461,12 @@ function FarmCanvas({
 
       await updateCrops();
       if (!mountedRef.current) return;
+      if (pendingGroupRef.current) {
+        const nextGroup = pendingGroupRef.current;
+        pendingGroupRef.current = null;
+        cropsGroupRef.current = nextGroup;
+        scene.add(nextGroup);
+      }
       isSceneReadyRef.current = true;
 
       const currentSelected = selectedPlotIndexRef.current;
@@ -481,7 +486,6 @@ function FarmCanvas({
                 mat.emissiveIntensity = 0.9;
               }
             }
-            mat.needsUpdate = true;
           };
           if (Array.isArray(mesh.material)) {
             mesh.material.forEach(applyInitSelection);
@@ -491,26 +495,28 @@ function FarmCanvas({
         });
       }
 
-      const render = () => {
+      let lastRenderTime = 0;
+      const render = (now = 0) => {
         if (!mountedRef.current || !activeRef.current) {
           animationRef.current = null;
           return;
         }
         animationRef.current = requestAnimationFrame(render);
+        if (now - lastRenderTime < 32) return;
+        lastRenderTime = now;
         try {
-          const shouldLog = needsRenderLogRef.current;
-          if (shouldLog) {
-            needsRenderLogRef.current = false;
-            console.log('🎬 [RENDER] renderer.render 호출 전');
+          if (pendingGroupRef.current && sceneRef.current) {
+            const nextGroup = pendingGroupRef.current;
+            pendingGroupRef.current = null;
+            const prevGroup = cropsGroupRef.current;
+            cropsGroupRef.current = nextGroup;
+            sceneRef.current.add(nextGroup);
+            if (prevGroup) {
+              sceneRef.current.remove(prevGroup);
+            }
           }
           renderer.render(scene, camera);
-          if (shouldLog) {
-            console.log('🎬 [RENDER] gl.endFrameEXP 호출 전');
-          }
           gl.endFrameEXP();
-          if (shouldLog) {
-            console.log('🎬 [RENDER] 프레임 완료');
-          }
         } catch (renderErr) {
           console.log('❌ 렌더 프레임 에러:', renderErr?.message);
         }
