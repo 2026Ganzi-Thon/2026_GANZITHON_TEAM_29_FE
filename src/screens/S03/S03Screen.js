@@ -1,4 +1,4 @@
-﻿import React, { useCallback, useEffect, useState } from 'react';
+﻿import React, { useCallback, useEffect, useRef, useState } from 'react';
 import { useFocusEffect } from '@react-navigation/native';
 import {
   View,
@@ -17,6 +17,15 @@ import { fetchHistory } from '../../lib/records';
 import FarmScene3D from '../../components/farm/FarmScene3D';
 import TopHeaderCard from '../../components/common/TopHeaderCard';
 import BottomNoticeToast from '../../components/common/BottomNoticeToast';
+
+// 진행률(%) → 성장 단계 (S06과 같은 기준: 1 씨앗, 2 새싹, 3 성장, 4 열매, 5 다 자람)
+function stageFromProgress(progress) {
+  if (progress >= 100) return 5;
+  if (progress >= 80) return 4;
+  if (progress >= 50) return 3;
+  if (progress >= 20) return 2;
+  return 1;
+}
 
 export default function S03Screen({ navigation, route }) {
   const [currentTime, setCurrentTime] = useState('');
@@ -43,6 +52,9 @@ export default function S03Screen({ navigation, route }) {
     return () => clearInterval(interval);
   }, []);
 
+  // 지금 키우는 작물의 진행 상황 (농장에 있는 동안에도 단계가 바뀌도록)
+  const growingRef = useRef(null);
+
   const DEFAULT_NOTICE = '빈 밭을 눌러 씨앗을 심어요';
   const [notice, setNotice] = useState(DEFAULT_NOTICE);
 
@@ -51,6 +63,30 @@ export default function S03Screen({ navigation, route }) {
       setSelectedPlot(null);
       setNotice(DEFAULT_NOTICE);
       fetchMyFarmData();
+
+      const timer = setInterval(() => {
+        const growing = growingRef.current;
+        if (!growing?.focusing) return;
+
+        const elapsed = growing.focusedSeconds + (Date.now() - growing.fetchedAt) / 1000;
+        const progress = (elapsed / growing.targetSeconds) * 100;
+
+        // 다 자라면 서버에서 '다 자람'으로 확정해야 하니 다시 불러옴
+        if (progress >= 100) {
+          growingRef.current = null;
+          fetchMyFarmData();
+          return;
+        }
+
+        const stage = stageFromProgress(progress);
+        setPlotsData((prev) =>
+          prev.some((p) => p.plotIndex === growing.plotIndex && p.stage !== stage)
+            ? prev.map((p) => (p.plotIndex === growing.plotIndex ? { ...p, stage } : p))
+            : prev
+        );
+      }, 5000);
+
+      return () => clearInterval(timer);
     }, [])
   );
 
@@ -70,6 +106,25 @@ export default function S03Screen({ navigation, route }) {
 
       const { data, error } = await supabase.rpc('get_my_farm');
       const farmList = error ? [] : (data || []);
+
+      // 농장 조회엔 진행 시간이 없어서, 키우는 작물의 진행 시간은 따로 가져옴
+      const { data: activeData } = await supabase.rpc('get_active_focus');
+      const activeSession = activeData?.session ?? null;
+      const activePlot = activeSession
+        ? farmList.find((item) => item.session_id === activeSession.session_id)
+        : null;
+      const activeTarget = Number(activeSession?.target_seconds || activePlot?.target_seconds || 0);
+
+      growingRef.current =
+        activePlot && activeTarget > 0
+          ? {
+              plotIndex: activePlot.plot_index - 1,
+              focusedSeconds: Number(activeSession.focused_seconds || 0),
+              targetSeconds: activeTarget,
+              fetchedAt: Date.now(),
+              focusing: activeSession.status === 'focusing',
+            }
+          : null;
 
       const formattedPlots = Array.from({ length: 12 }, (_, index) => {
         const plotIndex = index;
@@ -105,7 +160,12 @@ export default function S03Screen({ navigation, route }) {
           harvestId: serverPlot?.harvest_id || null,
           isAutoHarvest: serverPlot?.is_auto_harvest || false,
           focusedSeconds: serverPlot?.focused_seconds || 0,
-          stage: normalizedFarmStatus === 'ripe' ? 5 : 1,
+          stage:
+            normalizedFarmStatus === 'ripe'
+              ? 5
+              : growingRef.current?.plotIndex === plotIndex
+                ? stageFromProgress((growingRef.current.focusedSeconds / growingRef.current.targetSeconds) * 100)
+                : 1,
         };
       });
 
