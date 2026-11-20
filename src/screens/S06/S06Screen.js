@@ -19,7 +19,7 @@ import FarmScene3D from '../../components/farm/FarmScene3D';
 
 // 테스트용 배속: 1초에 몇 초씩 줄일지 (발표·실사용 때는 1로)
 // 1보다 크면 서버 시간과 맞추지 않고 앱 안에서만 빠르게 돌아감
-const TEST_SPEED = 120;
+const TEST_SPEED = 1;
 
 export default function S06Screen({ route, navigation }) {
   const {
