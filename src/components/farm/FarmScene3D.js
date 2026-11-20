@@ -511,8 +511,8 @@ function FarmCanvas({
             let targetKey = '';
             if (stage === 1) targetKey = `${cropName}_새싹`;
             else if (stage === 2) targetKey = `${cropName}_1`;
-            else if (stage === 3) targetKey = `${cropName}_1`;
-            else if (stage === 4) targetKey = `${cropName}_2`;
+            else if (stage === 3) targetKey = `${cropName}_2`;
+            else if (stage === 4) targetKey = `${cropName}_3`;
             else targetKey = `${cropName}_3`;
 
             const targetMeshName = CROP_MESH_MAP[targetKey];

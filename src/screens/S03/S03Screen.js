@@ -69,13 +69,25 @@ export default function S03Screen({ navigation, route }) {
       if (finalizeError) console.log('finalize_my_focus 안내:', finalizeError.message);
 
       const { data, error } = await supabase.rpc('get_my_farm');
-      const farmList = error ? [] : (data || []);
+      console.log('🌾 [S03] get_my_farm 응답:', JSON.stringify(data), '에러:', error?.message);
+
+      const rawList = Array.isArray(data)
+        ? data
+        : (data?.plots || data?.farm || data?.items || []);
+      const farmList = error ? [] : rawList;
+
+      // 서버가 0-based(0~11)를 쓰는지 1-based(1~12)를 쓰는지 자동 판별
+      const usesZeroBased =
+        farmList.some(item => Number(item.plot_index) === 0) &&
+        !farmList.some(item => Number(item.plot_index) === 12);
 
       const formattedPlots = Array.from({ length: 12 }, (_, index) => {
         const plotIndex = index;
-        const serverPlot = farmList.find(item => item.plot_index === plotIndex + 1);
+        const targetServerIdx = usesZeroBased ? plotIndex : plotIndex + 1;
+        const serverPlot = farmList.find(item => Number(item.plot_index) === targetServerIdx);
 
-        const rawFarmStatus = serverPlot?.farm_status || 'empty';
+        const rawFarmStatus =
+          serverPlot?.farm_status || (serverPlot?.crop_name ? 'growing' : 'empty');
         const rawSessionStatus = serverPlot?.session_status || null;
         const remSec =
           serverPlot?.remaining_seconds !== undefined && serverPlot?.remaining_seconds !== null
@@ -92,6 +104,22 @@ export default function S03Screen({ navigation, route }) {
         const normalizedFarmStatus = isExpiredActiveSession ? 'ripe' : rawFarmStatus;
         const normalizedSessionStatus = isExpiredActiveSession ? null : rawSessionStatus;
 
+        // 성장 단계 계산: ripe면 3(열매), growing/paused면 진행률 기반 1~3
+        let computedStage = 1;
+        if (normalizedFarmStatus === 'ripe') {
+          computedStage = 3;
+        } else if (normalizedFarmStatus === 'growing' || normalizedSessionStatus === 'paused') {
+          const targetSec = Number(serverPlot?.target_seconds || 0);
+          const focusedSec = Number(serverPlot?.focused_seconds || 0);
+          if (targetSec > 0) {
+            const elapsed = remSec !== null ? Math.max(0, targetSec - remSec) : focusedSec;
+            const pct = (elapsed / targetSec) * 100;
+            if (pct >= 100) computedStage = 3;
+            else if (pct >= 50) computedStage = 2;
+            else computedStage = 1;
+          }
+        }
+
         return {
           id: plotIndex,
           plotIndex: plotIndex,
@@ -105,7 +133,7 @@ export default function S03Screen({ navigation, route }) {
           harvestId: serverPlot?.harvest_id || null,
           isAutoHarvest: serverPlot?.is_auto_harvest || false,
           focusedSeconds: serverPlot?.focused_seconds || 0,
-          stage: normalizedFarmStatus === 'ripe' ? 5 : 1,
+          stage: computedStage,
         };
       });
 
@@ -127,7 +155,9 @@ export default function S03Screen({ navigation, route }) {
 
       if (unacknowledgedHarvestIds && unacknowledgedHarvestIds.length > 0) {
         // supabase.rpc()에는 .catch가 없어서 에러를 값으로 받음
-        const { error: ackError } = await supabase.rpc('ack_auto_harvest_notice', { p_harvest_ids: unacknowledgedHarvestIds });
+        const { error: ackError } = await supabase.rpc('ack_auto_harvest_notice', {
+          p_harvest_ids: unacknowledgedHarvestIds,
+        });
         if (ackError) console.log('자동 수확 알림 확인 실패:', ackError.message);
       }
     } catch (error) {
