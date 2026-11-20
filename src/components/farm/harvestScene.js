@@ -1,8 +1,8 @@
 import { THREE } from 'expo-three';
 
-import { CROP_MESH_MAP, loadCropsModel } from './FarmScene3D';
+import { CROP_MESH_MAP, cloneCropNode, loadCropsModel } from './FarmScene3D';
 
-// S10 수확: 수확한 밭에서 다 자란 작물이 튀어 오르며 반짝이는 연출 (1.5초)
+// S10 수확: 수확한 밭에서 열매가 튀어 오르며 반짝이는 연출 (1.5초)
 // 튀어 오른 뒤에는 밭 위에 떠서 천천히 돌아감
 // <FarmScene3D onSceneReady={createHarvestPop(plotIndex, cropName)} /> 처럼 씀
 
@@ -23,39 +23,43 @@ function easeOutBack(t) {
   return 1 + c3 * Math.pow(t - 1, 3) + c1 * Math.pow(t - 1, 2);
 }
 
-function findCropObject(cropsScene, name) {
-  return (
-    cropsScene.getObjectByName(name) ??
-    cropsScene.getObjectByName(THREE.PropertyBinding.sanitizeNodeName(name))
-  );
+
+// 수확한 열매 모델 (작물 고르기 화면 CropPreview3D와 같은 모델)
+const PRODUCE_MESH_MAP = {
+  새싹채소: 'cartoon_vegetables_3d_model001',
+  당근: 'cartoon_vegetables_3d_model002',
+  딸기: 'cartoon_vegetables_3d_model003',
+  호박: 'cartoon_vegetables_3d_model004',
+  토마토: 'cartoon_vegetables_3d_model005',
+  옥수수: 'cartoon_vegetables_3d_model006',
+};
+// 열매마다 크기 조절 (당근은 길쭉해서 커 보임)
+const PRODUCE_SIZE = { 당근: 0.8 };
+
+// 모델을 복제해서 바닥 가운데가 원점에 오게 놓음 (여러 조각으로 된 모델도 통째로)
+function cloneCropModel(cropsScene, name) {
+  const model = cloneCropNode(cropsScene, name);
+  if (!model) return null;
+
+  const box = new THREE.Box3().setFromObject(model, true);
+  if (box.isEmpty()) return null;
+
+  const size = new THREE.Vector3();
+  const center = new THREE.Vector3();
+  box.getSize(size);
+  box.getCenter(center);
+  model.position.set(-center.x, -box.min.y, -center.z);
+
+  const holder = new THREE.Group();
+  holder.add(model);
+  return { holder, footprint: Math.max(size.x, size.z) || 1, name };
 }
 
-// 다 자란 모습(_3)을 먼저 찾고, 모델이 없으면 그 전 단계로 대신함 (S17 ripeScene.js에서도 씀)
-// 토마토·옥수수처럼 여러 조각으로 된 모델도 통째로 복제
+// 다 자란 모습(_3)을 먼저 찾고, 모델이 없으면 그 전 단계로 대신함 (S17 ripeScene.js에서 씀)
 export function createGrownCrop(cropsScene, cropName) {
   for (const stage of ['3', '2', '1']) {
-    const name = CROP_MESH_MAP[`${cropName}_${stage}`];
-    if (!name) continue;
-
-    const source = findCropObject(cropsScene, name);
-    if (!source) continue;
-
-    const model = source.clone();
-    model.position.set(0, 0, 0);
-    model.updateMatrixWorld(true);
-
-    const box = new THREE.Box3().setFromObject(model);
-    if (box.isEmpty()) continue;
-
-    const size = new THREE.Vector3();
-    const center = new THREE.Vector3();
-    box.getSize(size);
-    box.getCenter(center);
-    model.position.set(-center.x, -box.min.y, -center.z);
-
-    const holder = new THREE.Group();
-    holder.add(model);
-    return { holder, footprint: Math.max(size.x, size.z) || 1 };
+    const grown = cloneCropModel(cropsScene, CROP_MESH_MAP[`${cropName}_${stage}`]);
+    if (grown) return grown;
   }
   return null;
 }
@@ -81,7 +85,9 @@ function startHarvestPop({ scene, plotCenters, addFrameCallback }, plotIndex, cr
     .then((cropsScene) => {
       if (disposed) return;
 
-      const grown = createGrownCrop(cropsScene, cropName);
+      // 수확 화면에선 열매 모델, 없으면 다 자란 작물
+      const produce = cloneCropModel(cropsScene, PRODUCE_MESH_MAP[cropName]);
+      const grown = produce ?? createGrownCrop(cropsScene, cropName);
       if (!grown) {
         console.log('수확 연출: 작물 모델을 찾지 못했어요:', cropName);
         return;
@@ -93,7 +99,8 @@ function startHarvestPop({ scene, plotCenters, addFrameCallback }, plotIndex, cr
 
       const crop = new THREE.Group();
       crop.add(grown.holder);
-      const cropScale = (plotWidth * CROP_SIZE_RATIO) / grown.footprint;
+      const sizeRatio = CROP_SIZE_RATIO * (produce ? PRODUCE_SIZE[cropName] ?? 1 : 1);
+      const cropScale = (plotWidth * sizeRatio) / grown.footprint;
       root.add(crop);
 
       // 반짝이: 작물 주변으로 퍼졌다가 사라지는 노란 점들

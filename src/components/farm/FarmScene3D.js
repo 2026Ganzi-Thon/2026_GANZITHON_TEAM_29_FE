@@ -20,8 +20,8 @@ const BARN_HIT_PADDING = 0.1;
 // 작물 크기: 밭 한 칸 너비 대비 비율 (새싹 화분 / 자라는 작물)
 const CROP_SEED_RATIO = 0.45;
 const CROP_PLANT_RATIO = 0.7;
-// 작물 밑의 흰 받침이 흙 아래로 숨게 묻는 깊이
-const CROP_SINK_RATIO = 0.24;
+// 테두리 윗면보다 살짝 아래(흙 높이)에 놓기
+const CROP_SINK_RATIO = 0.18;
 const CROP_SEED_SINK_RATIO = 0.3;
 
 // 밭 한 칸 터치 인식 반경 배율
@@ -59,6 +59,98 @@ export const CROP_MESH_MAP = {
   '호박_2': 'plant_seedling_3d_model019',
   '호박_3': 'plant_seedling_3d_model018',
 };
+
+// 자라는 작물 모델 밑 흰 받침의 [지름, 윗면 높이] (모델 가로·세로 중 큰 길이 대비, 미리 재 둔 값)
+// 받침 크기를 밭에 맞추고 받침만 흙 아래로 숨김 → 작물 크기가 단계마다 고르게 보임
+const CROP_PLATE_SIZES = {
+  plant_seedling_3d_model001: [1.00, 0.164], // 새싹채소_1
+  plant_seedling_3d_model002: [0.97, 0.173], // 새싹채소_2
+  plant_seedling_3d_model003: [0.85, 0.152], // 새싹채소_3
+  plant_seedling_3d_model004: [0.99, 0.149], // 당근_1
+  plant_seedling_3d_model005: [0.99, 0.146], // 당근_2
+  plant_seedling_3d_model006: [0.86, 0.130], // 당근_3
+  plant_seedling_3d_model009: [0.75, 0.107], // 토마토_1
+  plant_seedling_3d_model008: [0.80, 0.124], // 토마토_2
+  cartoon_vegetables_3d_model009: [0.74, 0.105], // 토마토_3
+  plant_seedling_3d_model010: [0.94, 0.111], // 옥수수_1
+  plant_seedling_3d_model011: [0.99, 0.121], // 옥수수_2
+  cartoon_vegetables_3d_model012: [0.80, 0.103], // 옥수수_3
+  plant_seedling_3d_model013: [0.83, 0.092], // 딸기_1
+  plant_seedling_3d_model014: [0.97, 0.123], // 딸기_2
+  plant_seedling_3d_model015: [0.76, 0.108], // 딸기_3
+  plant_seedling_3d_model020: [0.70, 0.115], // 호박_1
+  plant_seedling_3d_model019: [0.46, 0.075], // 호박_2
+  plant_seedling_3d_model018: [0.46, 0.113], // 호박_3
+};
+// 받침 지름 = 밭 너비의 80%
+const PLATE_FILL_RATIO = 0.8;
+// 호박 덩굴처럼 옆으로 넓은 작물도 밭 너비의 1.3배까지만
+const CROP_MAX_SPREAD_RATIO = 1.3;
+// 밭 테두리 윗면에서 흙까지 깊이
+const SOIL_DEPTH_RATIO = 0.055;
+// 받침 윗면을 흙보다 조금 더 아래로
+const PLATE_MARGIN = 0.03;
+
+// 자라는 작물을 밭에 놓을 크기(scale)와 테두리 윗면 기준 내릴 깊이(sink)
+// (S17 ripeScene.js에서도 씀)
+export function fitCropToPlot(meshName, footprint, plotWidth) {
+  const plate = CROP_PLATE_SIZES[meshName];
+  if (!plate) {
+    return { scale: (plotWidth * CROP_PLANT_RATIO) / footprint, sink: plotWidth * CROP_SINK_RATIO };
+  }
+
+  const [plateWidth, plateTop] = plate;
+  // 모델 기준 길이(footprint) 1이 실제로 차지할 크기
+  const unit = Math.min(PLATE_FILL_RATIO / plateWidth, CROP_MAX_SPREAD_RATIO) * plotWidth;
+  return {
+    scale: unit / footprint,
+    sink: plotWidth * SOIL_DEPTH_RATIO + (plateTop + PLATE_MARGIN) * unit,
+  };
+}
+
+// 모델 파일에서 따로 떨어져 있는 조각 (딸기 열매 단계의 빨간 딸기들)
+const CROP_EXTRA_PARTS = {
+  plant_seedling_3d_model015: [
+    'cartoon_vegetables_3d_model007',
+    'cartoon_vegetables_3d_model008',
+    'cartoon_vegetables_3d_model010',
+  ],
+};
+
+function findCropObject(cropsScene, name) {
+  return (
+    cropsScene.getObjectByName(name) ??
+    cropsScene.getObjectByName(THREE.PropertyBinding.sanitizeNodeName(name))
+  );
+}
+
+// 작물 모델 복제 (원점 기준, 따로 떨어진 조각도 같은 자리에 붙여서). geometry·material은 원본과 공유
+// (수확 연출 harvestScene.js에서도 씀)
+export function cloneCropNode(cropsScene, name) {
+  const source = name && findCropObject(cropsScene, name);
+  if (!source) return null;
+
+  const model = source.clone();
+  model.position.set(0, 0, 0);
+
+  const extras = CROP_EXTRA_PARTS[name];
+  if (!extras) {
+    model.updateMatrixWorld(true);
+    return model;
+  }
+
+  const group = new THREE.Group();
+  group.add(model);
+  extras.forEach((partName) => {
+    const part = findCropObject(cropsScene, partName);
+    if (!part) return;
+    const partClone = part.clone();
+    partClone.position.sub(source.position);
+    group.add(partClone);
+  });
+  group.updateMatrixWorld(true);
+  return group;
+}
 
 function resolveCropMeshKey(cropName, stage = 1) {
   const numStage = Number(stage) || 1;
@@ -509,17 +601,10 @@ function FarmCanvas({
 
             if (targetNodeName && plotCenter) {
               // Group 노드(예: cartoon_vegetables_3d_model009, 012)와 단일 Mesh 노드 모두 지원
-              const targetObj =
-                cropsScene.getObjectByName(targetNodeName) ??
-                cropsScene.getObjectByName(THREE.PropertyBinding.sanitizeNodeName(targetNodeName));
+              const clonedObj = cloneCropNode(cropsScene, targetNodeName);
 
-              if (targetObj) {
-                const clonedObj = targetObj.clone();
-                // 로컬 기준 정렬을 위해 루트 위치/회전 초기화 후 월드 매트릭스 계산
-                clonedObj.position.set(0, 0, 0);
-                clonedObj.updateMatrixWorld(true);
-
-                const box = new THREE.Box3().setFromObject(clonedObj);
+              if (clonedObj) {
+                const box = new THREE.Box3().setFromObject(clonedObj, true);
                 if (!box.isEmpty()) {
                   const isSeed = Number(stage || 1) <= 1;
                   const cropSize = new THREE.Vector3();
@@ -528,16 +613,16 @@ function FarmCanvas({
                   box.getCenter(center);
 
                   const footprint = Math.max(cropSize.x, cropSize.z) || 1;
-                  const ratio = isSeed ? CROP_SEED_RATIO : CROP_PLANT_RATIO;
-                  const sinkRatio = isSeed ? CROP_SEED_SINK_RATIO : CROP_SINK_RATIO;
+                  const fit = isSeed
+                    ? {
+                        scale: (plotCenter.width * CROP_SEED_RATIO) / footprint,
+                        sink: plotCenter.width * CROP_SEED_SINK_RATIO,
+                      }
+                    : fitCropToPlot(targetNodeName, footprint, plotCenter.width);
 
                   const pivot = new THREE.Group();
-                  pivot.position.set(
-                    plotCenter.x,
-                    plotCenter.y - plotCenter.width * sinkRatio,
-                    plotCenter.z
-                  );
-                  pivot.scale.setScalar((plotCenter.width * ratio) / footprint);
+                  pivot.position.set(plotCenter.x, plotCenter.y - fit.sink, plotCenter.z);
+                  pivot.scale.setScalar(fit.scale);
 
                   clonedObj.position.set(-center.x, -box.min.y, -center.z);
                   pivot.add(clonedObj);
