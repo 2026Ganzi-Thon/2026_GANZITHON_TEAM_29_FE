@@ -1,9 +1,10 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { StyleSheet, Text } from 'react-native';
 
 import FarmSheetLayout from '../../components/common/FarmSheetLayout';
 import AppButton from '../../components/common/AppButton';
 import { COLORS } from '../../styles/colors';
+import { createWatering } from '../../components/farm/wateringScene';
 
 // S11 물 주며 쉬기 (5분)
 
@@ -24,6 +25,10 @@ function initialRemainingMs(params) {
 }
 
 export default function S11Screen({ navigation, route }) {
+  // 방금 수확한 밭에만 물을 줌
+  const plotIndex = route.params?.plotIndex;
+  const watering = useMemo(() => createWatering(plotIndex), [plotIndex]);
+
   // 폰 시계가 서버와 달라도 괜찮도록 "지금부터 몇 ms 남았는지"만 가져와서 끝나는 시각을 정함
   const endAtRef = useRef(Date.now() + initialRemainingMs(route.params));
   const [remaining, setRemaining] = useState(
@@ -45,8 +50,7 @@ export default function S11Screen({ navigation, route }) {
   }, []);
 
   return (
-    // TODO: 농장 전체에 물 주는 3D 연출
-    <FarmSheetLayout>
+    <FarmSheetLayout onFarmReady={watering}>
       <Text style={styles.title}>물 주며 쉬는 중</Text>
       <Text style={styles.timer}>{formatTime(remaining)}</Text>
       <Text style={styles.subtitle}>눈을 감고 숨을 세 번 쉬어 보세요</Text>

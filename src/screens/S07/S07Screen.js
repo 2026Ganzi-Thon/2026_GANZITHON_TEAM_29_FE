@@ -129,7 +129,7 @@ export default function S07Screen({ route, navigation }) {
 
       if (isServerSession) {
         const { data } = await supabase.rpc('get_active_focus');
-        const activeSession = data?.session ?? data ?? null;
+        const activeSession = data?.session ?? null;
         if (activeSession) {
           if (activeSession.target_seconds) {
             syncedTarget = Math.max(1, Number(activeSession.target_seconds));

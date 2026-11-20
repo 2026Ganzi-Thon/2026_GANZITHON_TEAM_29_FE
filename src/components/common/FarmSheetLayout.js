@@ -27,8 +27,9 @@ const FARM_CAMERA_ANGLE = 45;
  * farmHeight: 농장 높이를 고정하고 싶을 때 사용 (예: 기록 화면처럼 시트 내용이 긴 화면)
  *   → 농장은 이 높이로 고정되고, 아래 시트가 나머지 공간을 다 차지함
  * onPressOutside: 시트 바깥(농장)을 눌렀을 때 실행 (예: 창 닫기). 창고를 누르면 설정 창이 먼저 열림
+ * onFarmReady: 농장 3D가 준비되면 실행 (예: S11 물 주기 연출 createWatering(plotIndex))
  */
-export default function FarmSheetLayout({ children, farmArea, farmHeight, onPressOutside }) {
+export default function FarmSheetLayout({ children, farmArea, farmHeight, onPressOutside, onFarmReady }) {
   return (
     <KeyboardAvoidingView
       style={styles.container}
@@ -41,6 +42,7 @@ export default function FarmSheetLayout({ children, farmArea, farmHeight, onPres
             visibleWidth={FARM_VISIBLE_WIDTH}
             cameraAngle={FARM_CAMERA_ANGLE}
             onPressBackground={onPressOutside}
+            onSceneReady={onFarmReady}
           />
         )}
 

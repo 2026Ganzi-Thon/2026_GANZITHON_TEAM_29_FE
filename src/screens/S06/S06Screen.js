@@ -17,6 +17,10 @@ import { iGa } from '../../utils/josa';
 
 import FarmScene3D from '../../components/farm/FarmScene3D';
 
+// 테스트용 배속: 1초에 몇 초씩 줄일지 (발표·실사용 때는 1로)
+// 1보다 크면 서버 시간과 맞추지 않고 앱 안에서만 빠르게 돌아감
+const TEST_SPEED = 120;
+
 export default function S06Screen({ route, navigation }) {
   const {
     plotIndex: routePlotIndex = 0,
@@ -94,7 +98,8 @@ export default function S06Screen({ route, navigation }) {
       const currentSess = sessionRef.current;
       if (!currentSess) return;
 
-      const elapsedSinceSync = Math.floor((Date.now() - lastSyncAnchorRef.current.syncedAtMs) / 1000);
+      const elapsedSinceSync =
+        Math.floor((Date.now() - lastSyncAnchorRef.current.syncedAtMs) / 1000) * TEST_SPEED;
       const estimatedRemaining = Math.max(0, lastSyncAnchorRef.current.remainingAtSync - elapsedSinceSync);
 
       remainingRef.current = estimatedRemaining;
@@ -174,10 +179,19 @@ export default function S06Screen({ route, navigation }) {
     const computedRem = computeServerRemainingSeconds(currentSession, tSec);
 
     // S07에서 넘어온 남은 시간이 있고 서버 값이 초기 전체 시간과 같을 때(서버가 일시정지/재개 시간을 못 줄인 경우) 보호
-    const resolvedRemaining =
+    let resolvedRemaining =
       overrideRemaining !== null && overrideRemaining !== undefined
         ? (computedRem >= tSec - 1 && overrideRemaining < tSec ? overrideRemaining : Math.min(computedRem, overrideRemaining))
         : computedRem;
+
+    // 배속 테스트: 서버는 실제 시간이라 남은 시간이 더 많음 → 돌아왔을 때 시간이 뒤로 가지 않게 작은 쪽을 씀
+    if (
+      TEST_SPEED > 1 &&
+      sessionRef.current?.session_id === currentSession.session_id &&
+      remainingRef.current > 0
+    ) {
+      resolvedRemaining = Math.min(resolvedRemaining, remainingRef.current);
+    }
 
     lastSyncAnchorRef.current = {
       syncedAtMs: Date.now(),
@@ -218,7 +232,7 @@ export default function S06Screen({ route, navigation }) {
   };
 
   const syncWithServer = async () => {
-    if (!isFocusedRef.current) return;
+    if (!isFocusedRef.current || TEST_SPEED > 1) return;
 
     try {
       const [farmRes, activeRes] = await Promise.all([
@@ -232,7 +246,7 @@ export default function S06Screen({ route, navigation }) {
       }
 
       const farmData = farmRes.data || [];
-      const activeSession = activeRes.data?.session ?? activeRes.data ?? null;
+      const activeSession = activeRes.data?.session ?? null;
 
       if (!activeSession || !isMountedRef.current || !isFocusedRef.current) return;
 
@@ -275,7 +289,7 @@ export default function S06Screen({ route, navigation }) {
       if (!currentSession) {
         const activeRes = await supabase.rpc('get_active_focus');
         if (activeRes.error) console.log('활성 세션 조회 실패:', activeRes.error.message);
-        else currentSession = activeRes.data?.session ?? activeRes.data ?? null;
+        else currentSession = activeRes.data?.session ?? null;
       }
 
       if (!currentSession) {
@@ -356,12 +370,36 @@ export default function S06Screen({ route, navigation }) {
         ? currentSess.session_id
         : undefined;
 
+    let harvestSessionId = serverSessionId;
+
     if (serverSessionId) {
       try {
         const { error } = await supabase.rpc('finalize_my_focus');
         if (error) console.log('finalize_my_focus 안내:', error.message);
       } catch (err) {
         console.log('finalize_my_focus 예외 무시:', err?.message);
+      }
+
+      // 배속 테스트: 서버에선 아직 키우는 중이라 수확이 안 되고 밭도 계속 차 있음
+      // → 씨앗으로 보관(중도 종료)해서 밭을 비움. 기록에는 씨앗 1개로 남음
+      if (TEST_SPEED > 1) {
+        try {
+          const { data: active } = await supabase.rpc('get_active_focus');
+          if (active?.session?.session_id === serverSessionId) {
+            harvestSessionId = undefined;
+            const { data: preview, error: previewError } = await supabase.rpc('preview_stop_focus', {
+              p_session_id: serverSessionId,
+            });
+            if (previewError) throw previewError;
+            const { error: confirmError } = await supabase.rpc('confirm_stop_focus', {
+              p_stop_token: preview.stop_token,
+            });
+            if (confirmError) throw confirmError;
+            console.log('배속 테스트: 서버에선 아직 덜 자라서 씨앗으로 보관하고 밭을 비웠어요');
+          }
+        } catch (err) {
+          console.log('배속 테스트 정리 실패:', err?.message);
+        }
       }
     }
 
@@ -370,7 +408,7 @@ export default function S06Screen({ route, navigation }) {
         cropName: currentCropName,
         minutes: Math.round(targetSecondsRef.current / 60) || 10,
         plotIndex,
-        sessionId: serverSessionId,
+        sessionId: harvestSessionId,
         isRipe: true,
       });
     }
@@ -408,7 +446,8 @@ export default function S06Screen({ route, navigation }) {
     timerRef.current = setInterval(() => {
       if (!isMountedRef.current || !isFocusedRef.current || isCompletingRef.current) return;
 
-      const elapsedSinceSync = Math.floor((Date.now() - lastSyncAnchorRef.current.syncedAtMs) / 1000);
+      const elapsedSinceSync =
+        Math.floor((Date.now() - lastSyncAnchorRef.current.syncedAtMs) / 1000) * TEST_SPEED;
       const nextSec = Math.max(0, lastSyncAnchorRef.current.remainingAtSync - elapsedSinceSync);
 
       if (nextSec <= 0) {
@@ -471,7 +510,8 @@ export default function S06Screen({ route, navigation }) {
         const { data } = await supabase.rpc('pause_focus', {
           p_session_id: session.session_id,
         });
-        if (data?.remaining_seconds !== undefined && data?.remaining_seconds !== null) {
+        // 배속 테스트일 땐 서버(실제 시간)보다 앱 시간이 앞서 있으니 앱 시간을 그대로 씀
+        if (TEST_SPEED === 1 && data?.remaining_seconds !== undefined && data?.remaining_seconds !== null) {
           pausedRemaining = Number(data.remaining_seconds);
         }
       }
@@ -563,7 +603,9 @@ export default function S06Screen({ route, navigation }) {
         <View style={styles.topSpacer} />
 
         <View style={styles.bottomSheet}>
-          <Text style={styles.title}>{currentCropName} 키우는 중</Text>
+          <Text style={styles.title}>
+            {currentCropName} 키우는 중{TEST_SPEED > 1 ? ` (${TEST_SPEED}배속 테스트)` : ''}
+          </Text>
           <Text style={styles.subtitle}>휴대폰을 세워두고 작물이 자라는 걸 지켜봐 주세요</Text>
 
           <View style={styles.stageContainer}>

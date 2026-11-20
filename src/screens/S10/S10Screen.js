@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { StyleSheet, Text, View } from 'react-native';
 
 import FarmSheetLayout from '../../components/common/FarmSheetLayout';
@@ -7,20 +7,32 @@ import AppTextInput from '../../components/common/AppTextInput';
 import { COLORS } from '../../styles/colors';
 import { eulReul } from '../../utils/josa';
 import { harvestCrop, harvestErrorMessage, saveHarvestNote, startRest } from '../../lib/harvest';
+import { createHarvestPop } from '../../components/farm/harvestScene';
 
 // S10 수확 완료
 // - S17에서 오면 harvestId를 받음 (이미 수확함)
 // - S06에서 바로 오면 sessionId를 받아서 여기서 수확함
 export default function S10Screen({ navigation, route }) {
-  const { cropName = '당근', minutes: paramMinutes = 20, sessionId, harvestId: paramHarvestId } =
-    route.params ?? {};
+  const {
+    cropName = '당근',
+    minutes: paramMinutes = 20,
+    sessionId,
+    harvestId: paramHarvestId,
+    plotIndex,
+  } = route.params ?? {};
+
+  // 수확한 밭에서 작물이 튀어 오르는 연출
+  const harvestPop = useMemo(() => createHarvestPop(plotIndex, cropName), [plotIndex, cropName]);
 
   const [harvestId, setHarvestId] = useState(paramHarvestId ?? null);
   const [minutes, setMinutes] = useState(paramMinutes);
   const [showRestCard, setShowRestCard] = useState(true);
   const [memo, setMemo] = useState('');
   const [loading, setLoading] = useState(false);
+  // 여기서 수확 저장 중일 땐 버튼을 막음 (끝나기 전에 누르면 메모·쉬기가 저장 안 됨)
+  const [harvesting, setHarvesting] = useState(!paramHarvestId && !!sessionId);
   const [error, setError] = useState('');
+  const busy = loading || harvesting;
 
   useEffect(() => {
     if (paramHarvestId || !sessionId) return;
@@ -33,8 +45,11 @@ export default function S10Screen({ navigation, route }) {
         if (result.focused_seconds) setMinutes(Math.round(result.focused_seconds / 60));
       })
       .catch((e) => {
-        // 10배속 테스트처럼 서버에서 아직 다 자라지 않은 경우 NOT_RIPE
+        // 배속 테스트처럼 서버에서 아직 다 자라지 않은 경우 NOT_RIPE
         console.log('수확 저장 실패:', e.code);
+      })
+      .finally(() => {
+        if (alive) setHarvesting(false);
       });
 
     return () => {
@@ -43,11 +58,11 @@ export default function S10Screen({ navigation, route }) {
   }, [paramHarvestId, sessionId]);
 
   const goRest = async () => {
-    if (loading) return;
+    if (busy) return;
 
     // TODO: 수확 기록이 없을 때(테스트 등)는 서버 없이 5분 휴식
     if (!harvestId) {
-      navigation.navigate('S11');
+      navigation.navigate('S11', { plotIndex });
       return;
     }
 
@@ -55,7 +70,11 @@ export default function S10Screen({ navigation, route }) {
     setError('');
     try {
       const rest = await startRest(harvestId);
-      navigation.navigate('S11', { restEndsAt: rest.rest_ends_at, serverNow: rest.server_now });
+      navigation.navigate('S11', {
+        restEndsAt: rest.rest_ends_at,
+        serverNow: rest.server_now,
+        plotIndex,
+      });
     } catch (e) {
       setError(harvestErrorMessage(e));
     } finally {
@@ -64,11 +83,14 @@ export default function S10Screen({ navigation, route }) {
   };
 
   const goToFarm = async () => {
-    if (loading) return;
+    if (busy) return;
     const note = memo.trim();
 
+    // 농장으로 돌아가면 수확한 밭이 1초 반짝임
+    const farmParams = { justHarvested: true, flashPlotIndex: plotIndex, flashKey: Date.now() };
+
     if (!note || !harvestId) {
-      navigation.popTo('S03', { justHarvested: true });
+      navigation.popTo('S03', farmParams);
       return;
     }
 
@@ -77,7 +99,7 @@ export default function S10Screen({ navigation, route }) {
     try {
       // guidance_required(저장 안 됨)여도 S13 없이 농장으로 감
       await saveHarvestNote(harvestId, note);
-      navigation.popTo('S03', { justHarvested: true });
+      navigation.popTo('S03', farmParams);
     } catch (e) {
       setError(harvestErrorMessage(e));
     } finally {
@@ -86,8 +108,7 @@ export default function S10Screen({ navigation, route }) {
   };
 
   return (
-    // TODO: 수확 3D 연출 (작물이 밭에서 튀어 오르며 반짝임, 1.5초)
-    <FarmSheetLayout>
+    <FarmSheetLayout onFarmReady={harvestPop}>
       <Text style={styles.title}>{eulReul(cropName)} 수확했어요!</Text>
       <Text style={styles.subtitle}>{minutes}분 동안 함께 키웠어요</Text>
 
@@ -99,14 +120,14 @@ export default function S10Screen({ navigation, route }) {
             <AppButton
               title="쉬어가기"
               onPress={goRest}
-              disabled={loading}
+              disabled={busy}
               style={styles.restButton}
             />
             <AppButton
               title="건너뛰기"
               variant="outline"
               onPress={() => setShowRestCard(false)}
-              disabled={loading}
+              disabled={busy}
               style={styles.restButton}
             />
           </View>
@@ -124,7 +145,7 @@ export default function S10Screen({ navigation, route }) {
 
       {!!error && <Text style={styles.error}>{error}</Text>}
 
-      <AppButton title="농장으로 가기" onPress={goToFarm} disabled={loading} />
+      <AppButton title="농장으로 가기" onPress={goToFarm} disabled={busy} />
     </FarmSheetLayout>
   );
 }

@@ -30,7 +30,8 @@ const CROP_SEED_SINK_RATIO = 0.3;
 const PLOT_TOUCH_RADIUS_RATIO = 2;
 
 
-const CROP_MESH_MAP = {
+// 수확 연출(harvestScene.js)에서도 씀
+export const CROP_MESH_MAP = {
   '새싹채소_새싹': 'cartoon_vegetables_3d_model001',
   '새싹채소_1': 'plant_seedling_3d_model001',
   '새싹채소_2': 'plant_seedling_3d_model002',
@@ -191,7 +192,7 @@ async function loadFarmModel() {
 }
 
 let cropsModelPromise = null;
-async function loadCropsModel() {
+export async function loadCropsModel() {
   if (!cropsModelPromise) {
     cropsModelPromise = (async () => {
       const cropAsset = Asset.fromModule(require('../../../assets/models/farms/crops.glb'));
@@ -218,6 +219,77 @@ async function loadCropsModel() {
   return cropsModelPromise;
 }
 
+// 물뿌리개 같은 다른 3D 소품 불러오기 (key마다 한 번만 불러오고 재사용)
+const extraModelPromises = {};
+export function loadExtraModel(key, assetModule) {
+  if (!extraModelPromises[key]) {
+    extraModelPromises[key] = (async () => {
+      const asset = Asset.fromModule(assetModule);
+      await asset.downloadAsync();
+      const buffer = await readLocalFile(asset.localUri);
+      const loader = createSafeGLTFLoader(key);
+      const gltf = await new Promise((resolve, reject) => loader.parse(buffer, '', resolve, reject));
+
+      gltf.scene.traverse((child) => {
+        if (child.isMesh && child.material) {
+          const materials = Array.isArray(child.material) ? child.material : [child.material];
+          materials.forEach(safeConfigureMaterial);
+        }
+      });
+      return gltf.scene;
+    })().catch((error) => {
+      delete extraModelPromises[key];
+      throw error;
+    });
+  }
+  return extraModelPromises[key];
+}
+
+// 밭 강조용 노란 테두리 (props.glb에 밭 한 칸과 같은 크기로 들어 있음)
+const PLOT_FRAME_NAME = 'farm scene 3d model_frame';
+const PLOT_FRAME_COLOR = 0xffd84d;
+// 밭 테두리와 겹쳐서 깜빡이지 않게 살짝 크게
+const PLOT_FRAME_SCALE = 1.04;
+// [농장으로 가기] 후 밭 반짝임 시간
+const PLOT_FLASH_SECONDS = 1;
+
+export async function loadPlotFrame() {
+  const props = await loadExtraModel('props', require('../../../assets/models/props/props.glb'));
+  return (
+    props.getObjectByName(THREE.PropertyBinding.sanitizeNodeName(PLOT_FRAME_NAME)) ??
+    props.getObjectByName(PLOT_FRAME_NAME)
+  );
+}
+
+// 밭 한 칸 위에 노란 테두리를 올림. 돌려준 material의 opacity로 밝기를 조절
+export function createPlotFrame(source, plotCenter, farmScale) {
+  const box = new THREE.Box3().setFromObject(source);
+  const center = new THREE.Vector3();
+  box.getCenter(center);
+
+  const material = new THREE.MeshBasicMaterial({
+    color: PLOT_FRAME_COLOR,
+    transparent: true,
+    opacity: 0,
+    depthWrite: false,
+  });
+  const mesh = new THREE.Mesh(source.geometry, material);
+  mesh.position.set(source.position.x - center.x, source.position.y - box.max.y, source.position.z - center.z);
+  mesh.quaternion.copy(source.quaternion);
+  mesh.scale.copy(source.scale);
+
+  // 테두리 윗면을 밭 테두리 윗면에 맞춤
+  const group = new THREE.Group();
+  group.add(mesh);
+  group.position.set(plotCenter.x, plotCenter.y + plotCenter.width * 0.01, plotCenter.z);
+  group.scale.setScalar(farmScale * PLOT_FRAME_SCALE);
+
+  return { group, material, dispose: () => material.dispose() };
+}
+
+// - flashPlotIndex, flashKey: 이 밭을 1초 반짝임 (flashKey가 바뀔 때마다 다시 반짝임)
+// - onSceneReady: 농장 장면이 준비되면 실행. 연출(물 주기 등)을 붙일 때 씀
+//   ({ scene, farm, plotCenters, addFrameCallback }) => 정리 함수
 export default function FarmScene3D({
   backgroundColor = 0xf5f1e8,
   visibleWidth,
@@ -228,6 +300,9 @@ export default function FarmScene3D({
   selectedPlotIndex,
   onSelectPlot,
   onPressBackground,
+  onSceneReady,
+  flashPlotIndex,
+  flashKey,
   blurred = false,
   opacity = 1,
 }) {
@@ -247,6 +322,9 @@ export default function FarmScene3D({
         onSelectPlot={onSelectPlot}
         onPressBarn={settings.canOpen ? settings.open : null}
         onPressBackground={onPressBackground}
+        onSceneReady={onSceneReady}
+        flashPlotIndex={flashPlotIndex}
+        flashKey={flashKey}
         active={isFocused}
         blurred={blurred}
         opacity={opacity}
@@ -266,12 +344,21 @@ function FarmCanvas({
   onSelectPlot,
   onPressBarn,
   onPressBackground,
+  onSceneReady,
+  flashPlotIndex,
+  flashKey,
   active,
   blurred = false,
 }) {
   const animationRef = useRef(null);
   const rendererRef = useRef(null);
   const renderRef = useRef(null);
+  const onSceneReadyRef = useRef(onSceneReady);
+  onSceneReadyRef.current = onSceneReady;
+  const frameCallbacksRef = useRef(new Set());
+  const sceneCleanupRef = useRef(null);
+  const flashRequestRef = useRef(null); // { index, key }
+  const playedFlashKeyRef = useRef(null);
   const mountedRef = useRef(true);
   const activeRef = useRef(active);
 
@@ -295,6 +382,7 @@ function FarmCanvas({
   const selectedPlotIndexRef = useRef(selectedPlotIndex);
   const onSelectPlotRef = useRef(onSelectPlot);
   const barnBoxRef = useRef(null);
+  const barnRef = useRef(null);
   const plotsDataRef = useRef(plotsData);
 
   useEffect(() => { selectedPlotIndexRef.current = selectedPlotIndex; }, [selectedPlotIndex]);
@@ -341,10 +429,54 @@ function FarmCanvas({
         cancelAnimationFrame(animationRef.current);
         animationRef.current = null;
       }
+      sceneCleanupRef.current?.();
+      sceneCleanupRef.current = null;
+      frameCallbacksRef.current.clear();
       rendererRef.current?.dispose();
       rendererRef.current = null;
     };
   }, []);
+
+  // 요청받은 밭을 1초 반짝임 (장면이 새로 만들어져도 한 번만)
+  const playFlashIfNeeded = () => {
+    const request = flashRequestRef.current;
+    const scene = sceneRef.current;
+    const plotCenter = request ? plotCentersRef.current[request.index] : null;
+    if (!request || request.key === playedFlashKeyRef.current) return;
+    if (Date.now() - request.requestedAt > 5000) return;
+    if (!isSceneReadyRef.current || !scene || !plotCenter || !farmModelRef.current) return;
+    playedFlashKeyRef.current = request.key;
+
+    const farmScale = farmModelRef.current.scale.x;
+    loadPlotFrame()
+      .then((source) => {
+        if (!source || !mountedRef.current || sceneRef.current !== scene) return;
+
+        const frame = createPlotFrame(source, plotCenter, farmScale);
+        scene.add(frame.group);
+
+        let elapsed = 0;
+        const callback = (deltaSeconds) => {
+          elapsed += deltaSeconds;
+          const t = Math.min(elapsed / PLOT_FLASH_SECONDS, 1);
+          // 두 번 반짝이고 사라짐
+          frame.material.opacity = Math.abs(Math.sin(t * Math.PI * 2)) * 0.9 * (1 - t * 0.3);
+          if (t >= 1) {
+            frameCallbacksRef.current.delete(callback);
+            scene.remove(frame.group);
+            frame.dispose();
+          }
+        };
+        frameCallbacksRef.current.add(callback);
+      })
+      .catch((error) => console.log('밭 반짝임: 테두리 불러오기 실패:', error?.message));
+  };
+
+  useEffect(() => {
+    if (flashPlotIndex === undefined || flashPlotIndex === null || !flashKey) return;
+    flashRequestRef.current = { index: flashPlotIndex, key: flashKey, requestedAt: Date.now() };
+    playFlashIfNeeded();
+  }, [flashKey]);
 
   const updateCrops = async () => {
     if (isUpdatingRef.current) {
@@ -441,6 +573,10 @@ function FarmCanvas({
       lastCropsKeyRef.current = null;
       cropsGroupRef.current = null;
       pendingGroupRef.current = null;
+      sceneCleanupRef.current?.();
+      sceneCleanupRef.current = null;
+      frameCallbacksRef.current.clear();
+      playedFlashKeyRef.current = null;
       hitMeshesRef.current = [];
       const width = gl.drawingBufferWidth;
       const height = gl.drawingBufferHeight;
@@ -493,6 +629,7 @@ function FarmCanvas({
         clonedFarm.getObjectByName(THREE.PropertyBinding.sanitizeNodeName(BARN_NODE_NAME)) ??
         clonedFarm.getObjectByName(BARN_NODE_NAME);
       if (!barn) console.log('창고 오브젝트를 찾지 못했어요:', BARN_NODE_NAME);
+      barnRef.current = barn ?? null;
       barnBoxRef.current = barn
         ? new THREE.Box3().setFromObject(barn).expandByScalar(BARN_HIT_PADDING)
         : null;
@@ -583,6 +720,21 @@ function FarmCanvas({
       isSceneReadyRef.current = true;
       updateCrops();
 
+      if (onSceneReadyRef.current) {
+        const cleanup = onSceneReadyRef.current({
+          scene,
+          farm: clonedFarm,
+          plotCenters: plotCentersRef.current,
+          addFrameCallback: (callback) => {
+            frameCallbacksRef.current.add(callback);
+            return () => frameCallbacksRef.current.delete(callback);
+          },
+        });
+        sceneCleanupRef.current = typeof cleanup === 'function' ? cleanup : null;
+      }
+
+      playFlashIfNeeded();
+
       const currentSelected = selectedPlotIndexRef.current;
       if (currentSelected !== null && currentSelected !== undefined) {
         borderMeshes.forEach((mesh) => {
@@ -601,6 +753,7 @@ function FarmCanvas({
         }
         animationRef.current = requestAnimationFrame(render);
         if (now - lastRenderTime < 32) return;
+        const deltaSeconds = lastRenderTime ? Math.min((now - lastRenderTime) / 1000, 0.1) : 0;
         lastRenderTime = now;
         try {
           if (pendingGroupRef.current && sceneRef.current) {
@@ -611,6 +764,7 @@ function FarmCanvas({
             sceneRef.current.add(nextGroup);
             if (prevGroup) sceneRef.current.remove(prevGroup);
           }
+          frameCallbacksRef.current.forEach((callback) => callback(deltaSeconds));
           renderer.render(scene, camera);
           gl.endFrameEXP();
         } catch (renderErr) {
@@ -649,11 +803,25 @@ function FarmCanvas({
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(mouse, camera);
 
-        // 창고 → 밭(중앙/테두리 통합 히트박스 및 평면 최근접 판정) → 배경 순서
-        if (onPressBarn && barnBoxRef.current && raycaster.ray.intersectsBox(barnBoxRef.current)) {
+        // 1) 실제 모양끼리 비교: 창고와 밭 중 카메라에 더 가까운 쪽
+        //    (창고 상자를 먼저 보면 창고 앞 1·2번 밭을 눌러도 창고가 눌림)
+        const barnHit = onPressBarn && barnRef.current
+          ? raycaster.intersectObject(barnRef.current, true)[0]
+          : null;
+        const plotHit = onSelectPlotRef.current
+          ? raycaster.intersectObjects([...plotMeshesRef.current, ...borderMeshesRef.current], false)[0]
+          : null;
+
+        if (barnHit && (!plotHit || barnHit.distance < plotHit.distance)) {
           onPressBarn();
           return;
         }
+        if (plotHit && typeof plotHit.object.userData?.plotIndex === 'number') {
+          onSelectPlotRef.current(plotHit.object.userData.plotIndex);
+          return;
+        }
+
+        // 2) 살짝 빗나갔을 때: 밭 히트박스 → 창고 주변 → 가장 가까운 밭 → 배경 순서
         console.log('터치 좌표:', { locationX, locationY, width, height }, 'hitMesh 개수:', hitMeshes.length, 'plotCenters 개수:', plotCenters.filter(Boolean).length);
 
         if (onSelectPlotRef.current) {
@@ -667,7 +835,14 @@ function FarmCanvas({
               }
             }
           }
+        }
 
+        if (onPressBarn && barnBoxRef.current && raycaster.ray.intersectsBox(barnBoxRef.current)) {
+          onPressBarn();
+          return;
+        }
+
+        if (onSelectPlotRef.current) {
           // 히트박스 경계에 살짝 빗나가더라도 밭 평면 기준 가장 가까운 칸 선택
           const validCenters = plotCenters.filter(Boolean);
           if (validCenters.length > 0) {
