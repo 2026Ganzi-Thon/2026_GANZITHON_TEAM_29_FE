@@ -63,8 +63,9 @@ export const CROP_MESH_MAP = {
 function resolveCropMeshKey(cropName, stage = 1) {
   const numStage = Number(stage) || 1;
   // 1단계: 새싹 / 2단계: 성장 / 3단계 이상: 열매
-  if (numStage <= 1) return `${cropName}_새싹`;
-  if (numStage === 2) return `${cropName}_2`;
+  if (numStage == 1) return `${cropName}_새싹`;
+  if (numStage == 2) return `${cropName}_1`;
+  if (numStage == 3) return `${cropName}_2`;
   return `${cropName}_3`;
 }
 
