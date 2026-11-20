@@ -20,8 +20,8 @@ const BARN_HIT_PADDING = 0.1;
 // 작물 크기: 밭 한 칸 너비 대비 비율 (새싹 화분 / 자라는 작물)
 const CROP_SEED_RATIO = 0.45;
 const CROP_PLANT_RATIO = 0.7;
-// 테두리 윗면보다 살짝 아래(흙 높이)에 놓기
-const CROP_SINK_RATIO = 0.18;
+// 작물 밑의 흰 받침이 흙 아래로 숨게 묻는 깊이
+const CROP_SINK_RATIO = 0.24;
 const CROP_SEED_SINK_RATIO = 0.3;
 
 // 밭 한 칸 터치 인식 반경 배율

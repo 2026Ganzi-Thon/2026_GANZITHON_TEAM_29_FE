@@ -9,6 +9,8 @@ import { createGrownCrop } from './harvestScene';
 
 // 작물 크기 (밭 한 칸 너비 대비)
 const CROP_SIZE_RATIO = 0.75;
+// 작물 밑의 흰 받침이 흙 아래로 숨게 묻는 깊이 (밭 한 칸 너비 대비)
+const CROP_SINK_RATIO = 0.24;
 // 어느 밭인지 모를 때 쓸 밭
 const DEFAULT_PLOT_INDEX = 5;
 
@@ -51,7 +53,7 @@ function startRipeShowcase({ scene, farm, plotCenters, addFrameCallback }, plotI
       const grown = createGrownCrop(cropsScene, cropName);
       if (grown) {
         crop.add(grown.holder);
-        crop.position.set(target.x, target.y - plotWidth * 0.08, target.z);
+        crop.position.set(target.x, target.y - plotWidth * CROP_SINK_RATIO, target.z);
         crop.scale.setScalar((plotWidth * CROP_SIZE_RATIO) / grown.footprint);
         root.add(crop);
       } else {
