@@ -5,6 +5,7 @@ import {
   Pressable,
   StyleSheet,
   ActivityIndicator,
+  Alert,
   AppState,
 } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
@@ -19,7 +20,7 @@ import FarmScene3D from '../../components/farm/FarmScene3D';
 
 // 테스트용 배속: 1초에 몇 초씩 줄일지 (발표·실사용 때는 1로)
 // 1보다 크면 서버 시간과 맞추지 않고 앱 안에서만 빠르게 돌아감
-const TEST_SPEED = 120;
+const TEST_SPEED = 1;
 
 export default function S06Screen({ route, navigation }) {
   const {
@@ -31,6 +32,8 @@ export default function S06Screen({ route, navigation }) {
     fromPause = false,
     isNewPlanting = false,
   } = route.params || {};
+  // 키우던 밭을 눌러 들어온 경우엔 새로 심지 않음
+  const routeSessionId = route.params?.sessionId;
   const isFocused = useIsFocused();
 
   const [plotIndex, setPlotIndex] = useState(routePlotIndex);
@@ -272,17 +275,30 @@ export default function S06Screen({ route, navigation }) {
       const farmData = farmRes.data || [];
 
       let currentSession = null;
-      const shouldStartNew = Boolean(isFirstLoad && !fromPause && (isNewPlanting || cropId));
+      const shouldStartNew = Boolean(
+        isFirstLoad && !fromPause && !routeSessionId && (isNewPlanting || cropId)
+      );
 
       if (shouldStartNew) {
         const targetPlot = farmData.find(p => p.plot_index === routePlotIndex + 1);
+        let startError = null;
         if (targetPlot?.plot_id && cropId) {
-          const { data: startData, error: startError } = await supabase.rpc('start_focus', {
+          const res = await supabase.rpc('start_focus', {
             p_plot_id: targetPlot.plot_id,
             p_crop_id: cropId,
           });
+          startError = res.error;
           if (startError) console.log('start_focus 실패:', startError.message);
-          else currentSession = startData?.session ?? startData ?? null;
+          else currentSession = res.data?.session ?? res.data ?? null;
+        }
+
+        // 심기에 실패하면 기록이 안 남으니 농장으로 (이미 키우는 작물이 있으면 그걸 보여 줌)
+        if (!currentSession && startError?.details !== 'ACTIVE_SESSION_EXISTS') {
+          if (!isMountedRef.current) return;
+          Alert.alert('심지 못했어요', '잠시 후 다시 시도해 주세요');
+          if (navigation.canGoBack()) navigation.goBack();
+          else navigation.replace('S03');
+          return;
         }
       }
 
@@ -307,6 +323,20 @@ export default function S06Screen({ route, navigation }) {
       }
 
       if (!isMountedRef.current) return;
+
+      if (currentSession.status === 'paused') {
+        const pausedPlot = farmData.find(p => p.plot_id === currentSession.plot_id);
+        const pausedTarget = Number(currentSession.target_seconds || routeTargetSeconds || 600);
+        navigation.replace('S07', {
+          sessionId: currentSession.session_id,
+          remainingSeconds: computeServerRemainingSeconds(currentSession, pausedTarget),
+          targetSeconds: pausedTarget,
+          plotIndex: pausedPlot ? pausedPlot.plot_index - 1 : routePlotIndex,
+          cropId: currentSession.crop_id || cropId,
+          cropName: pausedPlot?.crop_name || cropName || currentCropName,
+        });
+        return;
+      }
 
       const pauseOverride =
         fromPause && routeRemainingSeconds !== undefined && routeRemainingSeconds !== null
@@ -403,13 +433,13 @@ export default function S06Screen({ route, navigation }) {
       }
     }
 
+    // 바로 수확하지 않고 수확 확인으로 (나중에 수확하면 다 자란 채로 밭에 남음)
     if (isMountedRef.current) {
-      navigation.replace('S10', {
+      navigation.replace('S17', {
         cropName: currentCropName,
         minutes: Math.round(targetSecondsRef.current / 60) || 10,
         plotIndex,
         sessionId: harvestSessionId,
-        isRipe: true,
       });
     }
   };

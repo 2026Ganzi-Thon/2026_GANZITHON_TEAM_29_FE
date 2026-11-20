@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import { StyleSheet, Text } from 'react-native';
 
 import FarmSheetLayout from '../../components/common/FarmSheetLayout';
@@ -9,11 +9,19 @@ import { getStartScreen, signIn } from '../../lib/auth';
 import { authErrorMessage } from '../../lib/errors';
 
 // S18 로그인
-export default function S18Screen({ navigation }) {
+export default function S18Screen({ navigation, route }) {
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
+
+  // 회원가입 후 돌아왔을 때 안내 문구·이메일 보여 주기
+  const notice = route.params?.notice;
+  const signedUpEmail = route.params?.email;
+  useEffect(() => {
+    if (notice) setError(notice);
+    if (signedUpEmail) setEmail(signedUpEmail);
+  }, [notice, signedUpEmail]);
 
   const login = async () => {
     if (loading) return;

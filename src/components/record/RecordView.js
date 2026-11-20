@@ -1,5 +1,5 @@
 import React, { useCallback, useRef, useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
+import { Image, Pressable, ScrollView, StyleSheet, Text, View, useWindowDimensions } from 'react-native';
 import { useFocusEffect } from '@react-navigation/native';
 
 import FarmSheetLayout from '../common/FarmSheetLayout';
@@ -16,6 +16,17 @@ import {
   totalMinutes,
   weekRows,
 } from '../../lib/records';
+
+// 다 자란 작물 3D 모델을 찍은 이미지
+const CROP_ICONS = {
+  새싹채소: require('../../../assets/images/crops/sprout.png'),
+  당근: require('../../../assets/images/crops/carrot.png'),
+  토마토: require('../../../assets/images/crops/tomato.png'),
+  옥수수: require('../../../assets/images/crops/corn.png'),
+  딸기: require('../../../assets/images/crops/strawberry.png'),
+  호박: require('../../../assets/images/crops/pumpkin.png'),
+  씨앗: require('../../../assets/images/crops/seed.png'),
+};
 
 // S14 오늘 / S15 이번 주 / S15-1 전체
 
@@ -194,10 +205,13 @@ export default function RecordView({ navigation, initialTab = 'today' }) {
 function TodayRow({ row }) {
   return (
     <View style={styles.todayRow}>
-      {/* TODO: 작물 아이콘 이미지 나오면 교체 */}
-      <View style={styles.cropIcon}>
-        <Text style={styles.cropIconText}>작물</Text>
-      </View>
+      {CROP_ICONS[row.name] ? (
+        <Image source={CROP_ICONS[row.name]} style={styles.cropImage} resizeMode="contain" />
+      ) : (
+        <View style={styles.cropIcon}>
+          <Text style={styles.cropIconText}>작물</Text>
+        </View>
+      )}
       <Text style={styles.todayName}>
         {row.name} × {row.count}
       </Text>
@@ -316,6 +330,12 @@ const styles = StyleSheet.create({
     marginRight: 12,
     borderRadius: 10,
     backgroundColor: COLORS.Gray,
+  },
+
+  cropImage: {
+    width: 44,
+    height: 44,
+    marginRight: 10,
   },
 
   cropIconText: {

@@ -39,9 +39,8 @@ export default function S19Screen({ navigation }) {
       const session = await signUp(email.trim(), password, nickname.trim());
 
       if (!session) {
-        setError('가입은 됐어요. 로그인해 주세요');
         setLoading(false);
-        navigation.popTo('S18');
+        navigation.popTo('S18', { notice: '가입은 됐어요. 로그인해 주세요', email: email.trim() });
         return;
       }
 
