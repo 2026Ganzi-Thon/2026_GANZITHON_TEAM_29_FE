@@ -29,7 +29,10 @@ export default function S10Screen({ navigation, route }) {
   const [showRestCard, setShowRestCard] = useState(true);
   const [memo, setMemo] = useState('');
   const [loading, setLoading] = useState(false);
+  // 여기서 수확 저장 중일 땐 버튼을 막음 (끝나기 전에 누르면 메모·쉬기가 저장 안 됨)
+  const [harvesting, setHarvesting] = useState(!paramHarvestId && !!sessionId);
   const [error, setError] = useState('');
+  const busy = loading || harvesting;
 
   useEffect(() => {
     if (paramHarvestId || !sessionId) return;
@@ -42,8 +45,11 @@ export default function S10Screen({ navigation, route }) {
         if (result.focused_seconds) setMinutes(Math.round(result.focused_seconds / 60));
       })
       .catch((e) => {
-        // 10배속 테스트처럼 서버에서 아직 다 자라지 않은 경우 NOT_RIPE
+        // 배속 테스트처럼 서버에서 아직 다 자라지 않은 경우 NOT_RIPE
         console.log('수확 저장 실패:', e.code);
+      })
+      .finally(() => {
+        if (alive) setHarvesting(false);
       });
 
     return () => {
@@ -52,7 +58,7 @@ export default function S10Screen({ navigation, route }) {
   }, [paramHarvestId, sessionId]);
 
   const goRest = async () => {
-    if (loading) return;
+    if (busy) return;
 
     // TODO: 수확 기록이 없을 때(테스트 등)는 서버 없이 5분 휴식
     if (!harvestId) {
@@ -77,7 +83,7 @@ export default function S10Screen({ navigation, route }) {
   };
 
   const goToFarm = async () => {
-    if (loading) return;
+    if (busy) return;
     const note = memo.trim();
 
     // 농장으로 돌아가면 수확한 밭이 1초 반짝임
@@ -114,14 +120,14 @@ export default function S10Screen({ navigation, route }) {
             <AppButton
               title="쉬어가기"
               onPress={goRest}
-              disabled={loading}
+              disabled={busy}
               style={styles.restButton}
             />
             <AppButton
               title="건너뛰기"
               variant="outline"
               onPress={() => setShowRestCard(false)}
-              disabled={loading}
+              disabled={busy}
               style={styles.restButton}
             />
           </View>
@@ -139,7 +145,7 @@ export default function S10Screen({ navigation, route }) {
 
       {!!error && <Text style={styles.error}>{error}</Text>}
 
-      <AppButton title="농장으로 가기" onPress={goToFarm} disabled={loading} />
+      <AppButton title="농장으로 가기" onPress={goToFarm} disabled={busy} />
     </FarmSheetLayout>
   );
 }

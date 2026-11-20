@@ -7,6 +7,9 @@ import { supabase } from './src/lib/supabase';
 
 const NON_ACTIVE_STATUSES = ['paused', 'completed', 'harvested', 'finished', 'cancelled'];
 
+// 키우는 중에 잠깐 들르는 화면들 (여기 있을 땐 S06으로 끌고 가지 않음)
+const FOCUS_FLOW_SCREENS = ['S06', 'S07', 'S09', 'S12'];
+
 function resolveRemainingSeconds(sessionObj) {
   if (!sessionObj) return null;
 
@@ -50,7 +53,8 @@ export default function App() {
         return;
       }
 
-      const activeSession = data?.session ?? data ?? null;
+      // 키우는 중인 게 없으면 session이 null로 옴
+      const activeSession = data?.session ?? null;
       if (!activeSession) return;
 
       const status = String(activeSession.status || '').toLowerCase();
@@ -60,7 +64,7 @@ export default function App() {
       if (remaining !== null && remaining <= 0) return;
 
       const currentRouteName = navigationRef.getCurrentRoute()?.name;
-      if (currentRouteName === 'S06') return;
+      if (FOCUS_FLOW_SCREENS.includes(currentRouteName)) return;
 
       const plotIdx =
         typeof activeSession.plot_index === 'number'

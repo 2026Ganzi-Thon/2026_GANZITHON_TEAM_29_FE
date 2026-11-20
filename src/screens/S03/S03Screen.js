@@ -64,6 +64,10 @@ export default function S03Screen({ navigation, route }) {
     try {
       setLoading(true);
 
+      // 앱을 안 보는 사이 시간이 다 된 작물은 서버에서 '다 자람'으로 바꿔 줘야 농장에 제대로 보임
+      const { error: finalizeError } = await supabase.rpc('finalize_my_focus');
+      if (finalizeError) console.log('finalize_my_focus 안내:', finalizeError.message);
+
       const { data, error } = await supabase.rpc('get_my_farm');
       const farmList = error ? [] : (data || []);
 
@@ -122,7 +126,9 @@ export default function S03Screen({ navigation, route }) {
         .map(item => item.harvest_id);
 
       if (unacknowledgedHarvestIds && unacknowledgedHarvestIds.length > 0) {
-        await supabase.rpc('ack_auto_harvest_notice', { p_harvest_ids: unacknowledgedHarvestIds }).catch(() => {});
+        // supabase.rpc()에는 .catch가 없어서 에러를 값으로 받음
+        const { error: ackError } = await supabase.rpc('ack_auto_harvest_notice', { p_harvest_ids: unacknowledgedHarvestIds });
+        if (ackError) console.log('자동 수확 알림 확인 실패:', ackError.message);
       }
     } catch (error) {
       console.error('S03 데이터 초기화 실패:', error.message);

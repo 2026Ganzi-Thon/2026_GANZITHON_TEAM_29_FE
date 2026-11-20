@@ -246,7 +246,7 @@ export default function S06Screen({ route, navigation }) {
       }
 
       const farmData = farmRes.data || [];
-      const activeSession = activeRes.data?.session ?? activeRes.data ?? null;
+      const activeSession = activeRes.data?.session ?? null;
 
       if (!activeSession || !isMountedRef.current || !isFocusedRef.current) return;
 
@@ -289,7 +289,7 @@ export default function S06Screen({ route, navigation }) {
       if (!currentSession) {
         const activeRes = await supabase.rpc('get_active_focus');
         if (activeRes.error) console.log('활성 세션 조회 실패:', activeRes.error.message);
-        else currentSession = activeRes.data?.session ?? activeRes.data ?? null;
+        else currentSession = activeRes.data?.session ?? null;
       }
 
       if (!currentSession) {
@@ -510,7 +510,8 @@ export default function S06Screen({ route, navigation }) {
         const { data } = await supabase.rpc('pause_focus', {
           p_session_id: session.session_id,
         });
-        if (data?.remaining_seconds !== undefined && data?.remaining_seconds !== null) {
+        // 배속 테스트일 땐 서버(실제 시간)보다 앱 시간이 앞서 있으니 앱 시간을 그대로 씀
+        if (TEST_SPEED === 1 && data?.remaining_seconds !== undefined && data?.remaining_seconds !== null) {
           pausedRemaining = Number(data.remaining_seconds);
         }
       }
