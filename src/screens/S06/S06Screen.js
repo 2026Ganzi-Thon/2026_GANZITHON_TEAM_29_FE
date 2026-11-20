@@ -18,9 +18,13 @@ import { iGa } from '../../utils/josa';
 
 import FarmScene3D from '../../components/farm/FarmScene3D';
 
-// 테스트용 배속: 1초에 몇 초씩 줄일지 (발표·실사용 때는 1로)
+// 시연용 배속 버튼 (개발 모드에서만 보임)
 // 1보다 크면 서버 시간과 맞추지 않고 앱 안에서만 빠르게 돌아감
-const TEST_SPEED = 1;
+// → 서버에선 아직 덜 자란 상태라, 다 자라면 씨앗 보관(중도 종료)으로 처리하고 밭을 비움
+const SPEED_OPTIONS = [1, 100, 200, 300];
+const SHOW_SPEED_BUTTONS = __DEV__;
+// 화면을 나갔다 와도 고른 배속이 유지되도록 화면 밖에 둠
+let selectedSpeed = 1;
 
 export default function S06Screen({ route, navigation }) {
   const {
@@ -35,6 +39,11 @@ export default function S06Screen({ route, navigation }) {
   // 키우던 밭을 눌러 들어온 경우엔 새로 심지 않음
   const routeSessionId = route.params?.sessionId;
   const isFocused = useIsFocused();
+
+  const [speed, setSpeed] = useState(selectedSpeed);
+  const speedRef = useRef(selectedSpeed);
+  // 이번 작물을 한 번이라도 배속으로 키웠는지 (서버와 시간이 어긋났는지)
+  const spedUpRef = useRef(selectedSpeed > 1);
 
   const [plotIndex, setPlotIndex] = useState(routePlotIndex);
   const firstLoadRef = useRef(true);
@@ -102,7 +111,7 @@ export default function S06Screen({ route, navigation }) {
       if (!currentSess) return;
 
       const elapsedSinceSync =
-        Math.floor((Date.now() - lastSyncAnchorRef.current.syncedAtMs) / 1000) * TEST_SPEED;
+        Math.floor((Date.now() - lastSyncAnchorRef.current.syncedAtMs) / 1000) * speedRef.current;
       const estimatedRemaining = Math.max(0, lastSyncAnchorRef.current.remainingAtSync - elapsedSinceSync);
 
       remainingRef.current = estimatedRemaining;
@@ -189,7 +198,7 @@ export default function S06Screen({ route, navigation }) {
 
     // 배속 테스트: 서버는 실제 시간이라 남은 시간이 더 많음 → 돌아왔을 때 시간이 뒤로 가지 않게 작은 쪽을 씀
     if (
-      TEST_SPEED > 1 &&
+      spedUpRef.current &&
       sessionRef.current?.session_id === currentSession.session_id &&
       remainingRef.current > 0
     ) {
@@ -235,7 +244,7 @@ export default function S06Screen({ route, navigation }) {
   };
 
   const syncWithServer = async () => {
-    if (!isFocusedRef.current || TEST_SPEED > 1) return;
+    if (!isFocusedRef.current || speedRef.current > 1) return;
 
     try {
       const [farmRes, activeRes] = await Promise.all([
@@ -412,7 +421,7 @@ export default function S06Screen({ route, navigation }) {
 
       // 배속 테스트: 서버에선 아직 키우는 중이라 수확이 안 되고 밭도 계속 차 있음
       // → 씨앗으로 보관(중도 종료)해서 밭을 비움. 기록에는 씨앗 1개로 남음
-      if (TEST_SPEED > 1) {
+      if (spedUpRef.current) {
         try {
           const { data: active } = await supabase.rpc('get_active_focus');
           if (active?.session?.session_id === serverSessionId) {
@@ -477,7 +486,7 @@ export default function S06Screen({ route, navigation }) {
       if (!isMountedRef.current || !isFocusedRef.current || isCompletingRef.current) return;
 
       const elapsedSinceSync =
-        Math.floor((Date.now() - lastSyncAnchorRef.current.syncedAtMs) / 1000) * TEST_SPEED;
+        Math.floor((Date.now() - lastSyncAnchorRef.current.syncedAtMs) / 1000) * speedRef.current;
       const nextSec = Math.max(0, lastSyncAnchorRef.current.remainingAtSync - elapsedSinceSync);
 
       if (nextSec <= 0) {
@@ -528,6 +537,18 @@ export default function S06Screen({ route, navigation }) {
     return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
   };
 
+  // 배속을 바꾸면 지금 남은 시간부터 새 배속으로 줄어들게 기준점을 다시 잡음
+  const changeSpeed = (next) => {
+    lastSyncAnchorRef.current = {
+      syncedAtMs: Date.now(),
+      remainingAtSync: remainingRef.current,
+    };
+    selectedSpeed = next;
+    speedRef.current = next;
+    if (next > 1) spedUpRef.current = true;
+    setSpeed(next);
+  };
+
   const handlePauseFocus = async () => {
     if (timerRef.current) {
       clearInterval(timerRef.current);
@@ -541,7 +562,7 @@ export default function S06Screen({ route, navigation }) {
           p_session_id: session.session_id,
         });
         // 배속 테스트일 땐 서버(실제 시간)보다 앱 시간이 앞서 있으니 앱 시간을 그대로 씀
-        if (TEST_SPEED === 1 && data?.remaining_seconds !== undefined && data?.remaining_seconds !== null) {
+        if (!spedUpRef.current && data?.remaining_seconds !== undefined && data?.remaining_seconds !== null) {
           pausedRemaining = Number(data.remaining_seconds);
         }
       }
@@ -634,9 +655,25 @@ export default function S06Screen({ route, navigation }) {
 
         <View style={styles.bottomSheet}>
           <Text style={styles.title}>
-            {currentCropName} 키우는 중{TEST_SPEED > 1 ? ` (${TEST_SPEED}배속 테스트)` : ''}
+            {currentCropName} 키우는 중{speed > 1 ? ` (${speed}배속)` : ''}
           </Text>
           <Text style={styles.subtitle}>휴대폰을 세워두고 작물이 자라는 걸 지켜봐 주세요</Text>
+
+          {SHOW_SPEED_BUTTONS && (
+            <View style={styles.speedRow}>
+              {SPEED_OPTIONS.map((option) => (
+                <Pressable
+                  key={option}
+                  onPress={() => changeSpeed(option)}
+                  style={[styles.speedButton, speed === option && styles.speedButtonActive]}
+                >
+                  <Text style={[styles.speedText, speed === option && styles.speedTextActive]}>
+                    {option === 1 ? '실제' : `${option}배`}
+                  </Text>
+                </Pressable>
+              ))}
+            </View>
+          )}
 
           <View style={styles.stageContainer}>
             <View style={styles.stageDotsRow}>
@@ -703,6 +740,36 @@ export default function S06Screen({ route, navigation }) {
 }
 
 const styles = StyleSheet.create({
+  speedRow: {
+    flexDirection: 'row',
+    justifyContent: 'center',
+    gap: 8,
+    marginTop: 10,
+  },
+
+  speedButton: {
+    paddingVertical: 4,
+    paddingHorizontal: 12,
+    borderRadius: 999,
+    borderWidth: 1,
+    borderColor: '#D0D0D0',
+  },
+
+  speedButtonActive: {
+    borderColor: COLORS.black,
+    backgroundColor: COLORS.black,
+  },
+
+  speedText: {
+    fontSize: 12,
+    color: '#777777',
+  },
+
+  speedTextActive: {
+    color: COLORS.white,
+    fontWeight: '700',
+  },
+
   loaderContainer: {
     flex: 1,
     justifyContent: 'center',
