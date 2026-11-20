@@ -1,7 +1,7 @@
 import { THREE } from 'expo-three';
 
 import { createPlotFrame, loadCropsModel, loadPlotFrame } from './FarmScene3D';
-import { findGrownCropMesh } from './harvestScene';
+import { createGrownCrop } from './harvestScene';
 
 // S17 수확 확인: 다 자란 밭을 보여주는 연출
 // - 밭 위에 다 자란 작물을 세우고, 노란 테두리가 은은하게 깜빡이고, 작물 주변이 반짝임
@@ -46,21 +46,13 @@ function startRipeShowcase({ scene, farm, plotCenters, addFrameCallback }, plotI
         root.add(frame.group);
       }
 
-      // 2) 다 자란 작물 (geometry는 원본과 공유)
+      // 2) 다 자란 작물
       const crop = new THREE.Group();
-      const source = findGrownCropMesh(cropsScene, cropName);
-      if (source) {
-        const box = source.geometry.boundingBox ?? (source.geometry.computeBoundingBox(), source.geometry.boundingBox);
-        const size = new THREE.Vector3();
-        const center = new THREE.Vector3();
-        box.getSize(size);
-        box.getCenter(center);
-
-        const cropMesh = new THREE.Mesh(source.geometry, source.material);
-        cropMesh.position.set(-center.x, -box.min.y, -center.z);
-        crop.add(cropMesh);
+      const grown = createGrownCrop(cropsScene, cropName);
+      if (grown) {
+        crop.add(grown.holder);
         crop.position.set(target.x, target.y - plotWidth * 0.08, target.z);
-        crop.scale.setScalar((plotWidth * CROP_SIZE_RATIO) / (Math.max(size.x, size.z) || 1));
+        crop.scale.setScalar((plotWidth * CROP_SIZE_RATIO) / grown.footprint);
         root.add(crop);
       } else {
         console.log('다 자란 밭: 작물 모델을 찾지 못했어요:', cropName);
