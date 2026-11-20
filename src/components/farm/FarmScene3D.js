@@ -14,9 +14,7 @@ import { useSettings } from '../settings/SettingsContext';
 global.THREE = global.THREE || THREE;
 
 // 농장 모델 안의 창고 오브젝트. 누르면 설정 창이 열림
-// (GLB를 불러올 때 이름의 공백·점이 바뀌므로 sanitizeNodeName으로 맞춰서 찾음)
 const BARN_NODE_NAME = 'farm scene 3d model.004';
-// 창고가 작아서 주변을 조금 넉넉하게 눌러도 인식되도록
 const BARN_HIT_PADDING = 0.1;
 
 // 작물 크기: 밭 한 칸 너비 대비 비율 (새싹 화분 / 자라는 작물)
@@ -26,9 +24,8 @@ const CROP_PLANT_RATIO = 0.7;
 const CROP_SINK_RATIO = 0.18;
 const CROP_SEED_SINK_RATIO = 0.3;
 
-// 밭 한 칸 터치 인식 반경 배율 (1.0 = 칸 크기 기준, 살짝 넉넉하게 1.15)
+// 밭 한 칸 터치 인식 반경 배율
 const PLOT_TOUCH_RADIUS_RATIO = 2;
-
 
 // 수확 연출(harvestScene.js)에서도 씀
 export const CROP_MESH_MAP = {
@@ -45,12 +42,12 @@ export const CROP_MESH_MAP = {
   '토마토_새싹': 'cartoon_vegetables_3d_model001',
   '토마토_1': 'plant_seedling_3d_model009',
   '토마토_2': 'plant_seedling_3d_model008',
-  '토마토_3': 'tripo_mesh_b431ff45009',
+  '토마토_3': 'cartoon_vegetables_3d_model009',
 
   '옥수수_새싹': 'cartoon_vegetables_3d_model001',
   '옥수수_1': 'plant_seedling_3d_model010',
   '옥수수_2': 'plant_seedling_3d_model011',
-  '옥수수_3': 'plant_seedling_3d_model010',
+  '옥수수_3': 'cartoon_vegetables_3d_model012',
 
   '딸기_새싹': 'cartoon_vegetables_3d_model001',
   '딸기_1': 'plant_seedling_3d_model013',
@@ -62,6 +59,15 @@ export const CROP_MESH_MAP = {
   '호박_2': 'plant_seedling_3d_model019',
   '호박_3': 'plant_seedling_3d_model018',
 };
+
+function resolveCropMeshKey(cropName, stage = 1) {
+  const numStage = Number(stage) || 1;
+  // 1단계: 새싹 / 2단계: 성장 / 3단계 이상: 열매
+  if (numStage == 1) return `${cropName}_새싹`;
+  if (numStage == 2) return `${cropName}_1`;
+  if (numStage == 3) return `${cropName}_2`;
+  return `${cropName}_3`;
+}
 
 async function readLocalFile(uri) {
   try {
@@ -213,13 +219,13 @@ export async function loadCropsModel() {
           }
         }
       });
+      cropGltf.scene.updateMatrixWorld(true);
       return cropGltf.scene;
     })();
   }
   return cropsModelPromise;
 }
 
-// 물뿌리개 같은 다른 3D 소품 불러오기 (key마다 한 번만 불러오고 재사용)
 const extraModelPromises = {};
 export function loadExtraModel(key, assetModule) {
   if (!extraModelPromises[key]) {
@@ -245,12 +251,9 @@ export function loadExtraModel(key, assetModule) {
   return extraModelPromises[key];
 }
 
-// 밭 강조용 노란 테두리 (props.glb에 밭 한 칸과 같은 크기로 들어 있음)
 const PLOT_FRAME_NAME = 'farm scene 3d model_frame';
 const PLOT_FRAME_COLOR = 0xffd84d;
-// 밭 테두리와 겹쳐서 깜빡이지 않게 살짝 크게
 const PLOT_FRAME_SCALE = 1.04;
-// [농장으로 가기] 후 밭 반짝임 시간
 const PLOT_FLASH_SECONDS = 1;
 
 export async function loadPlotFrame() {
@@ -261,7 +264,6 @@ export async function loadPlotFrame() {
   );
 }
 
-// 밭 한 칸 위에 노란 테두리를 올림. 돌려준 material의 opacity로 밝기를 조절
 export function createPlotFrame(source, plotCenter, farmScale) {
   const box = new THREE.Box3().setFromObject(source);
   const center = new THREE.Vector3();
@@ -278,7 +280,6 @@ export function createPlotFrame(source, plotCenter, farmScale) {
   mesh.quaternion.copy(source.quaternion);
   mesh.scale.copy(source.scale);
 
-  // 테두리 윗면을 밭 테두리 윗면에 맞춤
   const group = new THREE.Group();
   group.add(mesh);
   group.position.set(plotCenter.x, plotCenter.y + plotCenter.width * 0.01, plotCenter.z);
@@ -287,9 +288,6 @@ export function createPlotFrame(source, plotCenter, farmScale) {
   return { group, material, dispose: () => material.dispose() };
 }
 
-// - flashPlotIndex, flashKey: 이 밭을 1초 반짝임 (flashKey가 바뀔 때마다 다시 반짝임)
-// - onSceneReady: 농장 장면이 준비되면 실행. 연출(물 주기 등)을 붙일 때 씀
-//   ({ scene, farm, plotCenters, addFrameCallback }) => 정리 함수
 export default function FarmScene3D({
   backgroundColor = 0xf5f1e8,
   visibleWidth,
@@ -357,7 +355,7 @@ function FarmCanvas({
   onSceneReadyRef.current = onSceneReady;
   const frameCallbacksRef = useRef(new Set());
   const sceneCleanupRef = useRef(null);
-  const flashRequestRef = useRef(null); // { index, key }
+  const flashRequestRef = useRef(null);
   const playedFlashKeyRef = useRef(null);
   const mountedRef = useRef(true);
   const activeRef = useRef(active);
@@ -413,7 +411,6 @@ function FarmCanvas({
     }
   }, [active]);
 
-  // 테두리(border_0~11)에만 하이라이트 적용
   useEffect(() => {
     borderMeshesRef.current.forEach((mesh) => {
       const pIdx = mesh.userData.plotIndex;
@@ -437,7 +434,6 @@ function FarmCanvas({
     };
   }, []);
 
-  // 요청받은 밭을 1초 반짝임 (장면이 새로 만들어져도 한 번만)
   const playFlashIfNeeded = () => {
     const request = flashRequestRef.current;
     const scene = sceneRef.current;
@@ -459,7 +455,6 @@ function FarmCanvas({
         const callback = (deltaSeconds) => {
           elapsed += deltaSeconds;
           const t = Math.min(elapsed / PLOT_FLASH_SECONDS, 1);
-          // 두 번 반짝이고 사라짐
           frame.material.opacity = Math.abs(Math.sin(t * Math.PI * 2)) * 0.9 * (1 - t * 0.3);
           if (t >= 1) {
             frameCallbacksRef.current.delete(callback);
@@ -508,27 +503,33 @@ function FarmCanvas({
           const { cropName, stage = 1, farmStatus } = plot;
 
           if (farmStatus !== 'empty' && cropName) {
-            let targetKey = '';
-            if (stage === 1) targetKey = `${cropName}_새싹`;
-            else if (stage === 2) targetKey = `${cropName}_1`;
-            else if (stage === 3) targetKey = `${cropName}_1`;
-            else if (stage === 4) targetKey = `${cropName}_2`;
-            else targetKey = `${cropName}_3`;
+            const targetKey = resolveCropMeshKey(cropName, stage);
+            const targetNodeName = CROP_MESH_MAP[targetKey];
+            const plotCenter = plotCentersRef.current[pIndex];
 
-            const targetMeshName = CROP_MESH_MAP[targetKey];
+            if (targetNodeName && plotCenter) {
+              // Group 노드(예: cartoon_vegetables_3d_model009, 012)와 단일 Mesh 노드 모두 지원
+              const targetObj =
+                cropsScene.getObjectByName(targetNodeName) ??
+                cropsScene.getObjectByName(THREE.PropertyBinding.sanitizeNodeName(targetNodeName));
 
-            if (targetMeshName) {
-              cropsScene.traverse((child) => {
-                if (child.isMesh && child.name === targetMeshName && child.geometry) {
-                  const box = child.geometry.boundingBox;
-                  const plotCenter = plotCentersRef.current[pIndex];
-                  if (!box || !plotCenter) return;
+              if (targetObj) {
+                const clonedObj = targetObj.clone();
+                // 로컬 기준 정렬을 위해 루트 위치/회전 초기화 후 월드 매트릭스 계산
+                clonedObj.position.set(0, 0, 0);
+                clonedObj.updateMatrixWorld(true);
 
+                const box = new THREE.Box3().setFromObject(clonedObj);
+                if (!box.isEmpty()) {
+                  const isSeed = Number(stage || 1) <= 1;
                   const cropSize = new THREE.Vector3();
+                  const center = new THREE.Vector3();
                   box.getSize(cropSize);
+                  box.getCenter(center);
+
                   const footprint = Math.max(cropSize.x, cropSize.z) || 1;
-                  const ratio = stage === 1 ? CROP_SEED_RATIO : CROP_PLANT_RATIO;
-                  const sinkRatio = stage === 1 ? CROP_SEED_SINK_RATIO : CROP_SINK_RATIO;
+                  const ratio = isSeed ? CROP_SEED_RATIO : CROP_PLANT_RATIO;
+                  const sinkRatio = isSeed ? CROP_SEED_SINK_RATIO : CROP_SINK_RATIO;
 
                   const pivot = new THREE.Group();
                   pivot.position.set(
@@ -538,15 +539,11 @@ function FarmCanvas({
                   );
                   pivot.scale.setScalar((plotCenter.width * ratio) / footprint);
 
-                  const meshNode = new THREE.Mesh(child.geometry, child.material);
-                  const center = new THREE.Vector3();
-                  box.getCenter(center);
-                  meshNode.position.set(-center.x, -box.min.y, -center.z);
-
-                  pivot.add(meshNode);
+                  clonedObj.position.set(-center.x, -box.min.y, -center.z);
+                  pivot.add(clonedObj);
                   nextGroup.add(pivot);
                 }
-              });
+              }
             }
           }
         });
@@ -634,7 +631,6 @@ function FarmCanvas({
         ? new THREE.Box3().setFromObject(barn).expandByScalar(BARN_HIT_PADDING)
         : null;
 
-      // 밭(plot_0~11): 작물 위치·크기 기준 / 테두리(border_0~11): 선택 하이라이트 기준
       const plotMeshes = [];
       const borderMeshes = [];
       clonedFarm.traverse((child) => {
@@ -694,7 +690,6 @@ function FarmCanvas({
           touchRadius: (cellWidth * 0.5) * PLOT_TOUCH_RADIUS_RATIO,
         };
 
-        // 테두리 + 안쪽 밭 전체를 덮는 히트 박스 (어디를 눌러도 같은 칸으로 인식)
         const boxW = Math.max(size.x * 1.35, 0.55);
         const boxD = Math.max(size.z * 1.35, 0.55);
         const boxH = Math.max(size.y, 0.4);
@@ -803,8 +798,6 @@ function FarmCanvas({
         const raycaster = new THREE.Raycaster();
         raycaster.setFromCamera(mouse, camera);
 
-        // 1) 실제 모양끼리 비교: 창고와 밭 중 카메라에 더 가까운 쪽
-        //    (창고 상자를 먼저 보면 창고 앞 1·2번 밭을 눌러도 창고가 눌림)
         const barnHit = onPressBarn && barnRef.current
           ? raycaster.intersectObject(barnRef.current, true)[0]
           : null;
@@ -820,9 +813,6 @@ function FarmCanvas({
           onSelectPlotRef.current(plotHit.object.userData.plotIndex);
           return;
         }
-
-        // 2) 살짝 빗나갔을 때: 밭 히트박스 → 창고 주변 → 가장 가까운 밭 → 배경 순서
-        console.log('터치 좌표:', { locationX, locationY, width, height }, 'hitMesh 개수:', hitMeshes.length, 'plotCenters 개수:', plotCenters.filter(Boolean).length);
 
         if (onSelectPlotRef.current) {
           if (hitMeshes.length > 0) {
@@ -843,7 +833,6 @@ function FarmCanvas({
         }
 
         if (onSelectPlotRef.current) {
-          // 히트박스 경계에 살짝 빗나가더라도 밭 평면 기준 가장 가까운 칸 선택
           const validCenters = plotCenters.filter(Boolean);
           if (validCenters.length > 0) {
             const avgY = validCenters.reduce((acc, item) => acc + item.y, 0) / validCenters.length;
