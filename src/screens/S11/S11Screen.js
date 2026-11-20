@@ -12,7 +12,6 @@ import { createWatering } from '../../components/farm/wateringScene';
 // - 키우는 도중(S12 과로 안내): 작물은 일시정지해 두고, 다 쉬면 다시 키우러 S06으로
 
 const REST_SECONDS = 5 * 60;
-// "다 쉬었어요!"를 보여 주고 이동하기까지 기다리는 시간
 const DONE_DELAY_MS = 3000;
 
 function formatTime(totalSeconds) {
@@ -30,7 +29,7 @@ function initialRemainingMs(params) {
 }
 
 export default function S11Screen({ navigation, route }) {
-  // 물은 쉬는 밭(방금 수확한 밭 / 키우던 밭)에만 줌
+  // 쉬는 밭에만 물을 줌
   const plotIndex = route.params?.plotIndex;
   const focusRest = route.params?.focusRest === true;
   const sessionId = route.params?.sessionId;
@@ -44,7 +43,6 @@ export default function S11Screen({ navigation, route }) {
   const done = remaining === 0;
   const leavingRef = useRef(false);
 
-  // 키우다 쉬러 온 경우: 일시정지해 둔 작물을 다시 키우고 S06으로
   const backToGrowing = useCallback(async () => {
     if (leavingRef.current) return;
     leavingRef.current = true;
@@ -74,14 +72,13 @@ export default function S11Screen({ navigation, route }) {
     return () => clearInterval(timer);
   }, []);
 
-  // 다 쉬면 잠깐 "다 쉬었어요!"를 보여 주고 자동 이동
   useEffect(() => {
     if (!done) return;
     const timeout = setTimeout(focusRest ? backToGrowing : goToFarm, DONE_DELAY_MS);
     return () => clearTimeout(timeout);
   }, [done, focusRest, backToGrowing, goToFarm]);
 
-  // 키우다 쉬는 중엔 뒤로가기도 "다시 키우기"로 처리 (일시정지가 남지 않게)
+  // 키우다 쉬는 중엔 뒤로가기도 다시 키우기로 처리
   useEffect(() => {
     if (!focusRest) return;
     navigation.setOptions({ gestureEnabled: false });

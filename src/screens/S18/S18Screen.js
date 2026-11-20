@@ -15,7 +15,7 @@ export default function S18Screen({ navigation, route }) {
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // 회원가입 화면에서 돌아올 때 안내 문구와 이메일을 받아서 보여 줌
+  // 회원가입 후 돌아왔을 때 안내 문구·이메일 보여 주기
   const notice = route.params?.notice;
   const signedUpEmail = route.params?.email;
   useEffect(() => {

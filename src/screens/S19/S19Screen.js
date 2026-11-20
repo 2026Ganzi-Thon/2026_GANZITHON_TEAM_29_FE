@@ -40,7 +40,6 @@ export default function S19Screen({ navigation }) {
 
       if (!session) {
         setLoading(false);
-        // 이 화면은 바로 닫히니까 안내 문구는 로그인 화면에서 보여 줌
         navigation.popTo('S18', { notice: '가입은 됐어요. 로그인해 주세요', email: email.trim() });
         return;
       }

@@ -17,7 +17,7 @@ import {
   weekRows,
 } from '../../lib/records';
 
-// 다 자란 작물 3D 모델을 그대로 찍어 둔 이미지
+// 다 자란 작물 3D 모델을 찍은 이미지
 const CROP_ICONS = {
   새싹채소: require('../../../assets/images/crops/sprout.png'),
   당근: require('../../../assets/images/crops/carrot.png'),

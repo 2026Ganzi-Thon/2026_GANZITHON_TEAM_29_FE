@@ -50,7 +50,7 @@ export default function S05Screen({ route, navigation }) {
       const { data, error } = await supabase
         .from('crops')
         .select('*')
-        .eq('is_active', true) // 예전에 키웠던 판매 종료 작물은 빼기
+        .eq('is_active', true)
         .order('sort_order', { ascending: true });
 
       if (error) {

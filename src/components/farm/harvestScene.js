@@ -31,8 +31,7 @@ function findCropObject(cropsScene, name) {
 }
 
 // 다 자란 모습(_3)을 먼저 찾고, 모델이 없으면 그 전 단계로 대신함 (S17 ripeScene.js에서도 씀)
-// 토마토·옥수수처럼 여러 조각(Group)으로 된 모델도 통째로 복제함 (geometry·material은 원본과 공유)
-// 돌려주는 holder는 바닥 가운데가 원점, footprint는 가로·세로 중 큰 길이
+// 토마토·옥수수처럼 여러 조각으로 된 모델도 통째로 복제
 export function createGrownCrop(cropsScene, cropName) {
   for (const stage of ['3', '2', '1']) {
     const name = CROP_MESH_MAP[`${cropName}_${stage}`];
@@ -92,7 +91,6 @@ function startHarvestPop({ scene, plotCenters, addFrameCallback }, plotIndex, cr
       const soil = new THREE.Vector3(target.x, target.y - plotWidth * 0.08, target.z);
       root.position.copy(soil);
 
-      // 작물: 밭 크기에 맞춰 키움
       const crop = new THREE.Group();
       crop.add(grown.holder);
       const cropScale = (plotWidth * CROP_SIZE_RATIO) / grown.footprint;

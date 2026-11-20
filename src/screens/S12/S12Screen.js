@@ -11,7 +11,7 @@ import { formatMinutes } from '../../utils/time';
 // - [쉬어가기] → 키우던 작물을 일시정지하고 S11 (물 주며 쉬기)
 // - [계속하기] → 창 닫고 S06으로 돌아가기
 export default function S12Screen({ navigation, route }) {
-  // S06에서 넘겨준 정보 (minutes: 쉬지 않고 키운 시간(분), 없으면 개발용 기본값)
+  // minutes: 쉬지 않고 키운 시간(분). 안 넘어오면 개발용 기본값
   const { minutes = 90, sessionId, plotIndex } = route.params ?? {};
   const [loading, setLoading] = useState(false);
 
@@ -25,19 +25,17 @@ export default function S12Screen({ navigation, route }) {
     if (loading) return;
     setLoading(true);
 
-    // 쉬는 동안 작물이 자라지 않도록 일시정지 (다 쉬면 S11에서 다시 재개)
+    // 쉬는 동안은 일시정지 (S11에서 재개)
     if (sessionId && !String(sessionId).startsWith('local_')) {
       const { error } = await supabase.rpc('pause_focus', { p_session_id: sessionId });
       if (error) console.log('쉬어가기 일시정지 실패:', error.message);
     }
 
-    // S06 위에 S11을 올려 두고, 다 쉬면 S06으로 돌아감
     navigation.replace('S11', { focusRest: true, sessionId, plotIndex });
   };
 
   return (
     <FarmSheetLayout>
-      {/* 기본 프로필 그림 */}
       <View style={styles.avatar}>
         <Ionicons name="person" size={78} color="#FFFFFF" style={styles.avatarIcon} />
       </View>

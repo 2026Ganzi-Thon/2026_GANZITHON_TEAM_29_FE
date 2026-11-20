@@ -20,7 +20,7 @@ import FarmScene3D from '../../components/farm/FarmScene3D';
 
 // 테스트용 배속: 1초에 몇 초씩 줄일지 (발표·실사용 때는 1로)
 // 1보다 크면 서버 시간과 맞추지 않고 앱 안에서만 빠르게 돌아감
-const TEST_SPEED = 120;
+const TEST_SPEED = 1;
 
 export default function S06Screen({ route, navigation }) {
   const {
@@ -32,7 +32,7 @@ export default function S06Screen({ route, navigation }) {
     fromPause = false,
     isNewPlanting = false,
   } = route.params || {};
-  // 농장에서 이미 키우던 밭을 눌러 들어온 경우 (새로 심지 않음)
+  // 키우던 밭을 눌러 들어온 경우엔 새로 심지 않음
   const routeSessionId = route.params?.sessionId;
   const isFocused = useIsFocused();
 
@@ -292,8 +292,7 @@ export default function S06Screen({ route, navigation }) {
           else currentSession = res.data?.session ?? res.data ?? null;
         }
 
-        // 심기에 실패했는데 앱에서만 타이머가 돌면 기록이 안 남으니 농장으로 돌려보냄
-        // (이미 키우는 작물이 있으면 그 작물을 이어서 보여 줌)
+        // 심기에 실패하면 기록이 안 남으니 농장으로 (이미 키우는 작물이 있으면 그걸 보여 줌)
         if (!currentSession && startError?.details !== 'ACTIVE_SESSION_EXISTS') {
           if (!isMountedRef.current) return;
           Alert.alert('심지 못했어요', '잠시 후 다시 시도해 주세요');
@@ -325,7 +324,6 @@ export default function S06Screen({ route, navigation }) {
 
       if (!isMountedRef.current) return;
 
-      // 일시정지된 작물이면 일시정지 화면(S07)으로
       if (currentSession.status === 'paused') {
         const pausedPlot = farmData.find(p => p.plot_id === currentSession.plot_id);
         const pausedTarget = Number(currentSession.target_seconds || routeTargetSeconds || 600);
@@ -435,13 +433,13 @@ export default function S06Screen({ route, navigation }) {
       }
     }
 
+    // 바로 수확하지 않고 수확 확인으로 (나중에 수확하면 다 자란 채로 밭에 남음)
     if (isMountedRef.current) {
-      navigation.replace('S10', {
+      navigation.replace('S17', {
         cropName: currentCropName,
         minutes: Math.round(targetSecondsRef.current / 60) || 10,
         plotIndex,
         sessionId: harvestSessionId,
-        isRipe: true,
       });
     }
   };
